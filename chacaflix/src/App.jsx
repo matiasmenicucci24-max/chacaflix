@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { supabase } from "./supabaseClient";
 import {
   Play, Pause, Info, ChevronLeft, ChevronRight, Search, Bell, ChevronDown,
   X, Plus, ThumbsUp, Calculator, FlaskConical,
@@ -120,23 +121,82 @@ const SEED_SUBJECTS = [
 ];
 
 /* ============================================================
-   PERSISTENCIA DE MATERIAS Y CLASES
-   Todo lo que el admin agregue/edite/borre vive en localStorage,
-   sembrado la primera vez con SEED_SUBJECTS.
+   PERSISTENCIA DE MATERIAS Y CLASES — ahora en Supabase.
+   Si la tabla "subjects" está vacía (primera vez que se conecta
+   la base), la sembramos automáticamente con SEED_SUBJECTS.
    ============================================================ */
-function loadSubjectsRaw() {
-  try {
-    const raw = localStorage.getItem("chacaflix_subjects");
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return SEED_SUBJECTS;
+function dbClassToApp(row) {
+  return {
+    id: row.id, subjectId: row.subject_id, ciclo: row.ciclo, title: row.title, prof: row.prof,
+    desc: row.description, videoUrl: row.video_url, thumbnail: row.thumbnail, duration: row.duration,
+    views: row.views || 0,
+  };
 }
-function saveSubjectsRaw(subjects) {
-  const raw = subjects.map((s) => ({ id: s.id, name: s.name, color: s.color, iconKey: s.iconKey, classes: s.classes }));
-  try { localStorage.setItem("chacaflix_subjects", JSON.stringify(raw)); } catch {}
+function appClassToDb(cls, subjectId) {
+  return {
+    id: cls.id, subject_id: subjectId ?? cls.subjectId, ciclo: cls.ciclo, title: cls.title, prof: cls.prof,
+    description: cls.desc, video_url: cls.videoUrl || null, thumbnail: cls.thumbnail || null, duration: cls.duration || null,
+  };
 }
-function withIcons(subjects) {
-  return subjects.map((s) => ({ ...s, icon: ICONS[s.iconKey] || Calculator }));
+
+async function seedDatabaseIfEmpty() {
+  const subjectRows = SEED_SUBJECTS.map((s) => ({ id: s.id, name: s.name, color: s.color, icon_key: s.iconKey }));
+  const classRows = SEED_SUBJECTS.flatMap((s) => s.classes.map((c) => appClassToDb(c, s.id)));
+  await supabase.from("subjects").insert(subjectRows);
+  await supabase.from("classes").insert(classRows);
+}
+
+async function fetchSubjects() {
+  let { data: subjectRows, error: subErr } = await supabase.from("subjects").select("*").order("created_at");
+  if (subErr) throw subErr;
+
+  if (subjectRows.length === 0) {
+    await seedDatabaseIfEmpty();
+    ({ data: subjectRows, error: subErr } = await supabase.from("subjects").select("*").order("created_at"));
+    if (subErr) throw subErr;
+  }
+
+  const { data: classRows, error: classErr } = await supabase.from("classes").select("*").order("created_at");
+  if (classErr) throw classErr;
+
+  return subjectRows.map((s) => ({
+    id: s.id, name: s.name, color: s.color, iconKey: s.icon_key, icon: ICONS[s.icon_key] || Calculator,
+    classes: classRows.filter((c) => c.subject_id === s.id).map(dbClassToApp),
+  }));
+}
+
+async function dbAddSubject(subj) {
+  const { error } = await supabase.from("subjects").insert({ id: subj.id, name: subj.name, color: subj.color, icon_key: subj.iconKey });
+  if (error) throw error;
+}
+async function dbUpdateSubject(id, patch) {
+  const payload = {};
+  if (patch.name !== undefined) payload.name = patch.name;
+  if (patch.color !== undefined) payload.color = patch.color;
+  if (patch.iconKey !== undefined) payload.icon_key = patch.iconKey;
+  const { error } = await supabase.from("subjects").update(payload).eq("id", id);
+  if (error) throw error;
+}
+async function dbDeleteSubject(id) {
+  const { error } = await supabase.from("subjects").delete().eq("id", id);
+  if (error) throw error;
+}
+async function dbAddClass(subjectId, cls) {
+  const { error } = await supabase.from("classes").insert(appClassToDb(cls, subjectId));
+  if (error) throw error;
+}
+async function dbUpdateClass(subjectId, classId, patch) {
+  const { error } = await supabase.from("classes").update(appClassToDb({ id: classId, ...patch }, subjectId)).eq("id", classId);
+  if (error) throw error;
+}
+async function dbDeleteClass(classId) {
+  const { error } = await supabase.from("classes").delete().eq("id", classId);
+  if (error) throw error;
+}
+async function dbIncrementView(classId) {
+  const { data } = await supabase.from("classes").select("views").eq("id", classId).single();
+  const current = data?.views || 0;
+  await supabase.from("classes").update({ views: current + 1 }).eq("id", classId);
 }
 
 // Devuelve todas las clases de todas las materias en una sola lista plana,
@@ -147,16 +207,6 @@ function getAllClasses(subjects) {
     s.classes.forEach((c) => all.push({ ...c, color: s.color, icon: s.icon, subjectName: s.name, subjectId: s.id, subject: s }));
   });
   return all;
-}
-
-// --- Vistas (para el ranking de más vistos del admin) ---
-function getViews() {
-  try { return JSON.parse(localStorage.getItem("chacaflix_views") || "{}"); } catch { return {}; }
-}
-function incrementView(classId) {
-  const views = getViews();
-  views[classId] = (views[classId] || 0) + 1;
-  try { localStorage.setItem("chacaflix_views", JSON.stringify(views)); } catch {}
 }
 
 // --- Cargar la API de YouTube y calcular la duración real de un video ---
@@ -623,12 +673,21 @@ function ClassPlayer({ ytId, rawUrl, title }) {
   );
 }
 
-// Guarda "Mi lista" y "Me gusta" en el navegador del alumno, para que persista entre visitas
-function readIdList(key) {
-  try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; }
+// "Mi lista" y "Me gusta" ahora viven en Supabase, ligadas a la cuenta del alumno
+// (antes eran globales por navegador; ahora son de verdad por alumno).
+async function dbFetchIdList(table, accountId) {
+  if (!accountId) return [];
+  const { data, error } = await supabase.from(table).select("class_id").eq("account_id", accountId);
+  if (error) { console.error(error); return []; }
+  return data.map((r) => r.class_id);
 }
-function writeIdList(key, list) {
-  try { localStorage.setItem(key, JSON.stringify(list)); } catch {}
+async function dbAddToList(table, accountId, classId) {
+  if (!accountId) return;
+  await supabase.from(table).insert({ account_id: accountId, class_id: classId });
+}
+async function dbRemoveFromList(table, accountId, classId) {
+  if (!accountId) return;
+  await supabase.from(table).delete().eq("account_id", accountId).eq("class_id", classId);
 }
 
 // Muestra la portada real de un video de YouTube. Si la versión de alta
@@ -646,11 +705,16 @@ function YtCover({ ytId, style, alt }) {
   );
 }
 
-function Modal({ item, color, Icon, onClose, autoPlay }) {
-  const [myList, setMyList] = useState(() => readIdList("chacaflix_my_list"));
-  const [liked, setLiked] = useState(() => readIdList("chacaflix_liked"));
+function Modal({ item, color, Icon, onClose, autoPlay, accountId }) {
+  const [myList, setMyList] = useState([]);
+  const [liked, setLiked] = useState([]);
   const [wantsPlay, setWantsPlay] = useState(autoPlay);
   useEffect(() => { setWantsPlay(autoPlay); }, [item?.id, autoPlay]);
+  useEffect(() => {
+    if (!accountId) { setMyList([]); setLiked([]); return; }
+    dbFetchIdList("my_list", accountId).then(setMyList);
+    dbFetchIdList("liked", accountId).then(setLiked);
+  }, [accountId]);
   if (!item) return null;
   const ytId = getYouTubeId(item.videoUrl);
 
@@ -659,12 +723,12 @@ function Modal({ item, color, Icon, onClose, autoPlay }) {
   const toggleMyList = () => {
     const next = inMyList ? myList.filter((id) => id !== item.id) : [...myList, item.id];
     setMyList(next);
-    writeIdList("chacaflix_my_list", next);
+    if (inMyList) dbRemoveFromList("my_list", accountId, item.id); else dbAddToList("my_list", accountId, item.id);
   };
   const toggleLiked = () => {
     const next = isLiked ? liked.filter((id) => id !== item.id) : [...liked, item.id];
     setLiked(next);
-    writeIdList("chacaflix_liked", next);
+    if (isLiked) dbRemoveFromList("liked", accountId, item.id); else dbAddToList("liked", accountId, item.id);
   };
 
   const pillBtn = { background: "rgba(120,120,120,0.4)", border: "2px solid rgba(255,255,255,0.5)", borderRadius: "50%", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" };
@@ -864,16 +928,29 @@ function ConfirmDialog({ title = "¿Estás seguro?", message, confirmLabel = "Co
 
 /* ============================================================
    CUENTAS DE ALUMNO — usuario, contraseña y ciclo asignado.
-   NOTA DE SEGURIDAD: esto es un sitio 100% estático sin servidor,
-   así que las contraseñas quedan guardadas en el navegador tal cual
-   (no hay forma de "hashear" nada de manera segura sin un backend).
-   Sirve para separar el contenido por ciclo, no para datos sensibles.
+   NOTA DE SEGURIDAD: no hay un backend propio con lógica de servidor,
+   así que las contraseñas quedan en la base tal cual (no hay forma de
+   "hashear" nada de manera segura solo desde el navegador). Sirve para
+   separar el contenido por ciclo, no para datos sensibles de verdad.
    ============================================================ */
-function readAccounts() {
-  try { return JSON.parse(localStorage.getItem("chacaflix_accounts") || "[]"); } catch { return []; }
+async function dbFindAccount(username) {
+  const { data, error } = await supabase.from("accounts").select("*").ilike("username", username).maybeSingle();
+  if (error) throw error;
+  return data;
 }
-function writeAccounts(list) {
-  try { localStorage.setItem("chacaflix_accounts", JSON.stringify(list)); } catch {}
+async function dbCreateAccount(account) {
+  const { data, error } = await supabase.from("accounts").insert(account).select().single();
+  if (error) throw error;
+  return data;
+}
+async function dbFetchAccounts() {
+  const { data, error } = await supabase.from("accounts").select("*").order("created_at");
+  if (error) throw error;
+  return data;
+}
+async function dbDeleteAccount(id) {
+  const { error } = await supabase.from("accounts").delete().eq("id", id);
+  if (error) throw error;
 }
 const ACCOUNT_COLORS = ["#E50914", "#2E86FF", "#22C55E", "#F97316", "#A855F7", "#EAB308"];
 
@@ -884,28 +961,33 @@ function AuthGate({ onAuthenticated, onAdminRequest }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [ciclo, setCiclo] = useState("basico");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const switchMode = (m) => { setMode(m); setError(""); setPassword(""); setConfirmPassword(""); };
 
-  const submit = () => {
-    const accounts = readAccounts();
+  const submit = async () => {
     const u = username.trim();
     if (!u || !password) { setError("Completá usuario y contraseña."); return; }
-
-    if (mode === "login") {
-      const found = accounts.find((a) => a.username.toLowerCase() === u.toLowerCase());
-      if (!found || found.password !== password) { setError("Usuario o contraseña incorrectos."); return; }
-      onAuthenticated(found);
-    } else {
-      if (accounts.some((a) => a.username.toLowerCase() === u.toLowerCase())) { setError("Ese nombre de usuario ya está registrado."); return; }
-      if (password.length < 4) { setError("La contraseña tiene que tener al menos 4 caracteres."); return; }
-      if (password !== confirmPassword) { setError("Las contraseñas no coinciden."); return; }
-      const account = {
-        id: `acc_${Date.now()}`, username: u, password, ciclo,
-        color: ACCOUNT_COLORS[accounts.length % ACCOUNT_COLORS.length],
-      };
-      writeAccounts([...accounts, account]);
-      onAuthenticated(account);
+    setLoading(true);
+    try {
+      if (mode === "login") {
+        const found = await dbFindAccount(u);
+        if (!found || found.password !== password) { setError("Usuario o contraseña incorrectos."); setLoading(false); return; }
+        onAuthenticated(found);
+      } else {
+        const existing = await dbFindAccount(u);
+        if (existing) { setError("Ese nombre de usuario ya está registrado."); setLoading(false); return; }
+        if (password.length < 4) { setError("La contraseña tiene que tener al menos 4 caracteres."); setLoading(false); return; }
+        if (password !== confirmPassword) { setError("Las contraseñas no coinciden."); setLoading(false); return; }
+        const account = await dbCreateAccount({
+          username: u, password, ciclo,
+          color: ACCOUNT_COLORS[Math.floor(Math.random() * ACCOUNT_COLORS.length)],
+        });
+        onAuthenticated(account);
+      }
+    } catch (e) {
+      setError("No se pudo conectar con la base de datos. Probá de nuevo en un rato.");
+      setLoading(false);
     }
   };
 
@@ -969,8 +1051,8 @@ function AuthGate({ onAuthenticated, onAdminRequest }) {
 
         {error && <div style={{ color: RED, fontSize: 13, marginBottom: 14 }}>{error}</div>}
 
-        <button onClick={submit} style={{ width: "100%", background: RED, border: "none", borderRadius: 4, padding: "12px 0", color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer", marginBottom: 14 }}>
-          {mode === "login" ? "Iniciar sesión" : "Registrarme"}
+        <button disabled={loading} onClick={submit} style={{ width: "100%", background: loading ? "#7a0d12" : RED, border: "none", borderRadius: 4, padding: "12px 0", color: "#fff", fontWeight: 700, fontSize: 15, cursor: loading ? "default" : "pointer", marginBottom: 14 }}>
+          {loading ? "Un momento..." : mode === "login" ? "Iniciar sesión" : "Registrarme"}
         </button>
 
         <div style={{ color: TEXT_MUTED, fontSize: 13 }}>
@@ -1059,12 +1141,21 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroPaused, featuredPool.length]);
 
+  const [myListIds, setMyListIds] = useState([]);
+
+  useEffect(() => {
+    if (!profile?.id) { setMyListIds([]); return; }
+    dbFetchIdList("my_list", profile.id).then(setMyListIds);
+    // se vuelve a pedir cada vez que se abre/cierra el modal, por si el
+    // alumno agregó o sacó algo de "Mi lista" mientras estaba mirando una clase
+  }, [profile?.id, modalItem]);
+
   const openModal = (item, subject, mode = "play") => {
     setModalItem(item);
     setModalColor(subject ? subject.color : (item.subjectColor || RED));
     setModalIcon(() => (subject ? subject.icon : Atom));
     setModalAutoPlay(mode === "play");
-    if (mode === "play" && item.videoUrl) incrementView(item.id);
+    if (mode === "play" && item.videoUrl) dbIncrementView(item.id);
   };
 
   const goTo = (v) => {
@@ -1079,7 +1170,7 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
   const searchResults = searchQuery.trim()
     ? allClasses.filter((c) => c.title.toLowerCase().includes(searchQuery.trim().toLowerCase()) || c.subjectName.toLowerCase().includes(searchQuery.trim().toLowerCase()))
     : [];
-  const myListClasses = allClasses.filter((c) => readIdList("chacaflix_my_list").includes(c.id));
+  const myListClasses = allClasses.filter((c) => myListIds.includes(c.id));
   const activeSubjectId = view.startsWith("materia:") ? view.split(":")[1] : null;
   const activeSubject = activeSubjectId ? subjects.find((s) => s.id === activeSubjectId) : null;
 
@@ -1372,7 +1463,7 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
         </div>
       )}
 
-      <Modal item={modalItem} color={modalColor} Icon={modalIcon} onClose={() => setModalItem(null)} autoPlay={modalAutoPlay} />
+      <Modal item={modalItem} color={modalColor} Icon={modalIcon} onClose={() => setModalItem(null)} autoPlay={modalAutoPlay} accountId={profile?.id} />
     </div>
   );
 }
@@ -1438,13 +1529,16 @@ function AdminDashboard({ subjects, onAddClass, onUpdateClass, onDeleteClass, on
   const [materiaCiclo, setMateriaCiclo] = useState("basico"); // pestaña de ciclo activa dentro del detalle
 
   const allClasses = getAllClasses(subjects);
-  const views = getViews();
-  const students = readAccounts();
+  const [students, setStudents] = useState([]);
+  useEffect(() => { dbFetchAccounts().then(setStudents).catch(() => setStudents([])); }, []);
+  const deleteAccount = async (id) => {
+    await dbDeleteAccount(id);
+    setStudents((prev) => prev.filter((a) => a.id !== id));
+  };
   const materiaDetail = materiaDetailId ? subjects.find((s) => s.id === materiaDetailId) : null;
 
   const top5 = [...allClasses]
-    .map((c) => ({ ...c, views: views[c.id] || 0 }))
-    .sort((a, b) => b.views - a.views)
+    .sort((a, b) => (b.views || 0) - (a.views || 0))
     .slice(0, 5);
 
   const askConfirm = (opts) => setConfirmState(opts);
@@ -1734,6 +1828,18 @@ function AdminDashboard({ subjects, onAddClass, onUpdateClass, onDeleteClass, on
                   <div style={{ background: "#2a2a2a", color: TEXT_MUTED, fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 4, textTransform: "uppercase" }}>
                     {CYCLES[p.ciclo]?.label || p.ciclo}
                   </div>
+                  <button
+                    onClick={() => askConfirm({
+                      title: "Borrar alumno",
+                      message: `¿Seguro que querés borrar la cuenta de "${p.username}"? Va a perder el acceso y su lista guardada. Esta acción no se puede deshacer.`,
+                      confirmLabel: "Borrar",
+                      onConfirm: () => { deleteAccount(p.id); setConfirmState(null); },
+                    })}
+                    style={{ background: "transparent", border: "1px solid #444", color: RED, padding: 8, borderRadius: 4, cursor: "pointer" }}
+                    aria-label="Borrar alumno"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               ))}
             </div>
@@ -1951,22 +2057,31 @@ function SubjectFormModal({ form, subjects, onClose, onSave }) {
 export default function ChacaFlix() {
   const [stage, setStage] = useState("intro"); // "intro" | "auth" | "adminLogin" | "admin" | "app"
   const [account, setAccount] = useState(null);
-  const [subjects, setSubjects] = useState(() => withIcons(loadSubjectsRaw()));
+  const [subjects, setSubjects] = useState([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(true);
+  const [subjectsError, setSubjectsError] = useState(null);
 
-  const updateSubjects = (updater) => {
-    setSubjects((prev) => {
-      const next = updater(prev);
-      saveSubjectsRaw(next);
-      return next;
-    });
+  const reloadSubjects = async () => {
+    try {
+      setSubjectsError(null);
+      const data = await fetchSubjects();
+      setSubjects(data);
+    } catch (e) {
+      console.error(e);
+      setSubjectsError(e.message || "Ocurrió un error desconocido.");
+    } finally {
+      setSubjectsLoading(false);
+    }
   };
 
-  const addClass = (subjectId, cls) => updateSubjects((prev) => prev.map((s) => (s.id === subjectId ? { ...s, classes: [...s.classes, cls] } : s)));
-  const updateClass = (subjectId, classId, patch) => updateSubjects((prev) => prev.map((s) => (s.id === subjectId ? { ...s, classes: s.classes.map((c) => (c.id === classId ? { ...c, ...patch } : c)) } : s)));
-  const deleteClass = (subjectId, classId) => updateSubjects((prev) => prev.map((s) => (s.id === subjectId ? { ...s, classes: s.classes.filter((c) => c.id !== classId) } : s)));
-  const addSubject = (subj) => updateSubjects((prev) => [...prev, { ...subj, icon: ICONS[subj.iconKey] || Calculator, classes: [] }]);
-  const updateSubject = (id, patch) => updateSubjects((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch, icon: ICONS[patch.iconKey || s.iconKey] || s.icon } : s)));
-  const deleteSubject = (id) => updateSubjects((prev) => prev.filter((s) => s.id !== id));
+  useEffect(() => { reloadSubjects(); }, []);
+
+  const addClass = async (subjectId, cls) => { await dbAddClass(subjectId, cls); await reloadSubjects(); };
+  const updateClass = async (subjectId, classId, patch) => { await dbUpdateClass(subjectId, classId, patch); await reloadSubjects(); };
+  const deleteClass = async (subjectId, classId) => { await dbDeleteClass(classId); await reloadSubjects(); };
+  const addSubject = async (subj) => { await dbAddSubject(subj); await reloadSubjects(); };
+  const updateSubject = async (id, patch) => { await dbUpdateSubject(id, patch); await reloadSubjects(); };
+  const deleteSubject = async (id) => { await dbDeleteSubject(id); await reloadSubjects(); };
 
   const handleIntroDone = () => setStage("auth");
   const handleAuthenticated = (acc) => {
@@ -1979,6 +2094,32 @@ export default function ChacaFlix() {
   };
 
   if (stage === "intro") return <IntroAnimation onDone={handleIntroDone} />;
+
+  // pantallas que necesitan las materias ya cargadas desde la base
+  if (stage === "app" || stage === "admin") {
+    if (subjectsLoading) {
+      return (
+        <div style={{ position: "fixed", inset: 0, background: BG, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" }}>
+          <Loader2 size={32} color={RED} className="spin" />
+          <div style={{ color: TEXT_MUTED, fontSize: 14 }}>Conectando con la base de datos...</div>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } } .spin { animation: spin 1s linear infinite; }`}</style>
+        </div>
+      );
+    }
+    if (subjectsError) {
+      return (
+        <div style={{ position: "fixed", inset: 0, background: BG, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24, textAlign: "center", fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" }}>
+          <div style={{ color: RED, fontSize: 16, fontWeight: 700 }}>No se pudo conectar con la base de datos</div>
+          <div style={{ color: TEXT_MUTED, fontSize: 13, maxWidth: 420 }}>{subjectsError}</div>
+          <div style={{ color: TEXT_MUTED, fontSize: 13, maxWidth: 420 }}>Revisá que ya hayas corrido el script SQL en Supabase y que las credenciales en <code style={{ color: "#eee" }}>supabaseClient.js</code> sean correctas.</div>
+          <button onClick={reloadSubjects} style={{ marginTop: 8, background: RED, border: "none", color: "#fff", padding: "10px 22px", borderRadius: 4, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+            Reintentar
+          </button>
+        </div>
+      );
+    }
+  }
+
   if (stage === "auth") return <AuthGate onAuthenticated={handleAuthenticated} onAdminRequest={() => setStage("adminLogin")} />;
   if (stage === "adminLogin") return <AdminLogin onSuccess={() => setStage("admin")} onCancel={() => setStage("auth")} />;
   if (stage === "admin") {

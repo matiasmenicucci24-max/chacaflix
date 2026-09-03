@@ -129,13 +129,14 @@ function dbClassToApp(row) {
   return {
     id: row.id, subjectId: row.subject_id, ciclo: row.ciclo, title: row.title, prof: row.prof,
     desc: row.description, videoUrl: row.video_url, thumbnail: row.thumbnail, duration: row.duration,
-    views: row.views || 0,
+    durationSeconds: row.duration_seconds || null, views: row.views || 0,
   };
 }
 function appClassToDb(cls, subjectId) {
   return {
     id: cls.id, subject_id: subjectId ?? cls.subjectId, ciclo: cls.ciclo, title: cls.title, prof: cls.prof,
-    description: cls.desc, video_url: cls.videoUrl || null, thumbnail: cls.thumbnail || null, duration: cls.duration || null,
+    description: cls.desc, video_url: cls.videoUrl || null, thumbnail: cls.thumbnail || null,
+    duration: cls.duration || null, duration_seconds: cls.durationSeconds || null,
   };
 }
 
@@ -197,6 +198,37 @@ async function dbIncrementView(classId) {
   const { data } = await supabase.from("classes").select("views").eq("id", classId).single();
   const current = data?.views || 0;
   await supabase.from("classes").update({ views: current + 1 }).eq("id", classId);
+}
+
+// --- Progreso real de reproducción, por alumno y por clase ---
+async function dbFetchProgress(accountId) {
+  if (!accountId) return {};
+  const { data, error } = await supabase.from("progress").select("class_id, seconds, updated_at").eq("account_id", accountId);
+  if (error) { console.error(error); return {}; }
+  const map = {};
+  data.forEach((r) => { map[r.class_id] = { seconds: r.seconds, updatedAt: r.updated_at }; });
+  return map;
+}
+async function dbSaveProgress(accountId, classId, seconds) {
+  if (!accountId) return;
+  await supabase.from("progress").upsert({ account_id: accountId, class_id: classId, seconds, updated_at: new Date().toISOString() });
+}
+async function dbFetchOneProgress(accountId, classId) {
+  if (!accountId) return 0;
+  const { data, error } = await supabase.from("progress").select("seconds").eq("account_id", accountId).eq("class_id", classId).maybeSingle();
+  if (error) { console.error(error); return 0; }
+  return data?.seconds || 0;
+}
+
+// Duración en segundos: usa la exacta si existe, o la estima del texto ("38 min", "1h 5min") como respaldo
+function getDurationSeconds(cls) {
+  if (cls.durationSeconds) return cls.durationSeconds;
+  if (!cls.duration) return null;
+  const hMatch = cls.duration.match(/(\d+)\s*h/);
+  const mMatch = cls.duration.match(/(\d+)\s*min/);
+  const h = hMatch ? parseInt(hMatch[1], 10) : 0;
+  const m = mMatch ? parseInt(mMatch[1], 10) : 0;
+  return h || m ? h * 3600 + m * 60 : null;
 }
 
 // Devuelve todas las clases de todas las materias en una sola lista plana,
@@ -317,12 +349,19 @@ function Thumb({ classItem, color, Icon, tall }) {
   );
 }
 
-function Row({ title, items, onOpen }) {
+function Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
   const scrollerRef = useRef(null);
-  const scrollBy = (dir) => {
-    if (scrollerRef.current) {
-      scrollerRef.current.scrollBy({ left: dir * 620, behavior: "smooth" });
-    }
+  const [hoveredId, setHoveredId] = useState(null);
+  const hoverTimer = useRef(null);
+  const scrollBy = (dir) => scrollerRef.current?.scrollBy({ left: dir * 620, behavior: "smooth" });
+
+  const handleEnter = (id) => {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setHoveredId(id), 350);
+  };
+  const handleLeave = () => {
+    clearTimeout(hoverTimer.current);
+    setHoveredId(null);
   };
 
   return (
@@ -346,33 +385,58 @@ function Row({ title, items, onOpen }) {
           style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", padding: "4px 4px" }}
           className="no-scrollbar"
         >
-          {items.map((c) => (
-            <div
-              key={c.id}
-              onClick={() => onOpen(c)}
-              className="card-item"
-              style={{
-                flex: "0 0 auto", width: 280, cursor: "pointer", borderRadius: 4, overflow: "hidden",
-                background: CARD_BG, transition: "transform 220ms ease, box-shadow 220ms ease",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = "scale(1.06)"; e.currentTarget.style.boxShadow = "0 12px 30px rgba(0,0,0,0.75)"; e.currentTarget.style.zIndex = 5; e.currentTarget.style.backgroundColor = CARD_HOVER_BG; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.zIndex = 0; e.currentTarget.style.backgroundColor = CARD_BG; }}
-            >
-              <Thumb classItem={c} color={c.color || c.subjectColor} Icon={c.icon || Calculator} tall />
-              {c.progress != null && (
-                <div style={{ height: 3, background: "#4d4d4d", width: "100%" }}>
-                  <div style={{ height: "100%", width: `${c.progress}%`, background: RED }} />
+          {items.map((c) => {
+            const expanded = hoveredId === c.id;
+            const inList = myListIds.includes(c.id);
+            return (
+              <div key={c.id} style={{ flex: "0 0 auto", width: 280, position: "relative" }} onMouseEnter={() => handleEnter(c.id)} onMouseLeave={handleLeave}>
+                <div
+                  onClick={() => onOpen(c)}
+                  style={{
+                    cursor: "pointer", borderRadius: 4, overflow: "hidden", background: expanded ? CARD_HOVER_BG : CARD_BG,
+                    transition: "transform 200ms ease, box-shadow 200ms ease", position: "relative",
+                    transform: expanded ? "scale(1.15)" : "scale(1)",
+                    boxShadow: expanded ? "0 16px 40px rgba(0,0,0,0.8)" : "none",
+                    zIndex: expanded ? 30 : 1,
+                  }}
+                >
+                  <Thumb classItem={c} color={c.color || c.subjectColor} Icon={c.icon || Calculator} tall />
+                  {c.progress != null && (
+                    <div style={{ height: 3, background: "#4d4d4d", width: "100%" }}>
+                      <div style={{ height: "100%", width: `${c.progress}%`, background: RED }} />
+                    </div>
+                  )}
+                  <div style={{ padding: "10px 12px 14px" }}>
+                    {c.videoUrl && (
+                      <div style={{ color: "#fff", fontSize: 13, fontWeight: 700, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</div>
+                    )}
+                    <div style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>{c.prof}</div>
+                    <div style={{ color: TEXT_MUTED, fontSize: 12, marginTop: 2 }}>{c.duration}</div>
+                    {expanded && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
+                        <button
+                          onClick={() => onOpen(c)}
+                          title="Reproducir"
+                          style={{ width: 32, height: 32, borderRadius: "50%", background: "#fff", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                        >
+                          <Play size={14} fill="#000" color="#000" style={{ marginLeft: 1 }} />
+                        </button>
+                        {onToggleMyList && (
+                          <button
+                            onClick={() => onToggleMyList(c.id)}
+                            title={inList ? "Quitar de mi lista" : "Agregar a mi lista"}
+                            style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(42,42,42,0.9)", border: "2px solid rgba(255,255,255,0.6)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                          >
+                            {inList ? <Check size={14} color="#4ADE80" /> : <Plus size={14} color="#fff" />}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
-              <div style={{ padding: "10px 12px 14px" }}>
-                {c.videoUrl && (
-                  <div style={{ color: "#fff", fontSize: 13, fontWeight: 700, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</div>
-                )}
-                <div style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>{c.prof}</div>
-                <div style={{ color: TEXT_MUTED, fontSize: 12, marginTop: 2 }}>{c.duration}</div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <button
           onClick={() => scrollBy(1)}
@@ -381,6 +445,86 @@ function Row({ title, items, onOpen }) {
             background: "linear-gradient(to left, rgba(20,20,20,0.9), transparent)",
             border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
           }}
+        >
+          <ChevronRight size={30} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Fila especial con las insignias numeradas grandes, como el "Top 10" real de Netflix
+function Top10Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
+  const scrollerRef = useRef(null);
+  const [hoveredId, setHoveredId] = useState(null);
+  const hoverTimer = useRef(null);
+  const scrollBy = (dir) => scrollerRef.current?.scrollBy({ left: dir * 620, behavior: "smooth" });
+  const handleEnter = (id) => { clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => setHoveredId(id), 350); };
+  const handleLeave = () => { clearTimeout(hoverTimer.current); setHoveredId(null); };
+
+  return (
+    <div style={{ marginBottom: 40, position: "relative" }}>
+      <h2 style={{ color: "#fff", fontSize: 20, fontWeight: 700, margin: "0 0 12px 4px", fontFamily: "Helvetica Neue, Arial, sans-serif" }}>
+        {title}
+      </h2>
+      <div style={{ position: "relative" }}>
+        <button
+          onClick={() => scrollBy(-1)}
+          style={{ position: "absolute", left: 0, top: 0, bottom: 0, zIndex: 10, width: 44, background: "linear-gradient(to right, rgba(20,20,20,0.9), transparent)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <ChevronLeft size={30} />
+        </button>
+        <div ref={scrollerRef} style={{ display: "flex", overflowX: "auto", scrollbarWidth: "none", padding: "4px 4px 4px 30px" }} className="no-scrollbar">
+          {items.map((c, i) => {
+            const expanded = hoveredId === c.id;
+            const inList = myListIds.includes(c.id);
+            return (
+              <div key={c.id} style={{ display: "flex", alignItems: "flex-end", flex: "0 0 auto" }} onMouseEnter={() => handleEnter(c.id)} onMouseLeave={handleLeave}>
+                <div
+                  style={{
+                    fontFamily: LOGO_FONT, fontWeight: 900, fontSize: 96, lineHeight: 0.72, letterSpacing: "-4px",
+                    color: BG, WebkitTextStroke: "3px #5a5a5a", marginRight: -22, position: "relative", zIndex: 1, userSelect: "none",
+                  }}
+                >
+                  {i + 1}
+                </div>
+                <div
+                  onClick={() => onOpen(c)}
+                  style={{
+                    width: 260, cursor: "pointer", borderRadius: 4, overflow: "hidden", background: expanded ? CARD_HOVER_BG : CARD_BG,
+                    position: "relative", zIndex: expanded ? 30 : 2, transition: "transform 200ms ease, box-shadow 200ms ease",
+                    transform: expanded ? "scale(1.15)" : "scale(1)",
+                    boxShadow: expanded ? "0 16px 40px rgba(0,0,0,0.8)" : "none",
+                  }}
+                >
+                  <Thumb classItem={c} color={c.color || c.subjectColor} Icon={c.icon || Calculator} tall />
+                  <div style={{ padding: "10px 12px 14px" }}>
+                    {c.videoUrl && (
+                      <div style={{ color: "#fff", fontSize: 13, fontWeight: 700, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</div>
+                    )}
+                    <div style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>{c.prof}</div>
+                    <div style={{ color: TEXT_MUTED, fontSize: 12, marginTop: 2 }}>{c.duration}</div>
+                    {expanded && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => onOpen(c)} title="Reproducir" style={{ width: 32, height: 32, borderRadius: "50%", background: "#fff", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                          <Play size={14} fill="#000" color="#000" style={{ marginLeft: 1 }} />
+                        </button>
+                        {onToggleMyList && (
+                          <button onClick={() => onToggleMyList(c.id)} title={inList ? "Quitar de mi lista" : "Agregar a mi lista"} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(42,42,42,0.9)", border: "2px solid rgba(255,255,255,0.6)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                            {inList ? <Check size={14} color="#4ADE80" /> : <Plus size={14} color="#fff" />}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <button
+          onClick={() => scrollBy(1)}
+          style={{ position: "absolute", right: 0, top: 0, bottom: 0, zIndex: 10, width: 44, background: "linear-gradient(to left, rgba(20,20,20,0.9), transparent)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}
         >
           <ChevronRight size={30} />
         </button>
@@ -421,7 +565,7 @@ const iconBtnStyle = { background: "transparent", border: "none", cursor: "point
    oculta los controles nativos de YouTube) como con un link de
    video directo (usa la etiqueta <video> normal de HTML).
    ============================================================ */
-function ClassPlayer({ ytId, rawUrl, title }) {
+function ClassPlayer({ ytId, rawUrl, title, accountId, classId }) {
   const apiReady = useYouTubeAPI();
   const ytContainerRef = useRef(null);
   const ytPlayerRef = useRef(null);
@@ -440,32 +584,53 @@ function ClassPlayer({ ytId, rawUrl, title }) {
   const [playerError, setPlayerError] = useState(null);
   const playerLoadedRef = useRef(false);
 
-  // --- inicialización del player de YouTube ---
+  // --- inicialización del player de YouTube (esperando primero el progreso guardado, si hay) ---
   useEffect(() => {
     if (!ytId || !apiReady || !ytContainerRef.current) return;
-    ytPlayerRef.current = new window.YT.Player(ytContainerRef.current, {
-      width: "100%",
-      height: "100%",
-      videoId: ytId,
-      playerVars: { controls: 0, disablekb: 1, rel: 0, modestbranding: 1, iv_load_policy: 3, playsinline: 1, autoplay: 1 },
-      events: {
-        onReady: (e) => {
-          playerLoadedRef.current = true;
-          setDuration(e.target.getDuration());
-          // arranca con sonido: como el modal se abrió con un clic real del
-          // usuario ("Reproducir"), el navegador permite el autoplay sin mutear
-          e.target.playVideo();
+    let cancelled = false;
+    (async () => {
+      const resume = accountId && classId ? await dbFetchOneProgress(accountId, classId) : 0;
+      if (cancelled || !ytContainerRef.current) return;
+      ytPlayerRef.current = new window.YT.Player(ytContainerRef.current, {
+        width: "100%",
+        height: "100%",
+        videoId: ytId,
+        playerVars: { controls: 0, disablekb: 1, rel: 0, modestbranding: 1, iv_load_policy: 3, playsinline: 1, autoplay: 1 },
+        events: {
+          onReady: (e) => {
+            playerLoadedRef.current = true;
+            const dur = e.target.getDuration();
+            setDuration(dur);
+            // arranca con sonido: como el modal se abrió con un clic real del
+            // usuario ("Reproducir"), el navegador permite el autoplay sin mutear
+            e.target.playVideo();
+            // retoma donde había quedado, salvo que esté al principio o casi terminando
+            if (resume > 5 && dur && resume < dur - 15) e.target.seekTo(resume, true);
+          },
+          onStateChange: (e) => setIsPlaying(e.data === window.YT.PlayerState.PLAYING),
+          onError: (e) => {
+            // 101/150 = el dueño del video desactivó la reproducción embebida
+            // 100 = el video fue eliminado o es privado
+            setPlayerError(e.data === 101 || e.data === 150 ? "embed" : "unavailable");
+          },
         },
-        onStateChange: (e) => setIsPlaying(e.data === window.YT.PlayerState.PLAYING),
-        onError: (e) => {
-          // 101/150 = el dueño del video desactivó la reproducción embebida
-          // 100 = el video fue eliminado o es privado
-          setPlayerError(e.data === 101 || e.data === 150 ? "embed" : "unavailable");
-        },
-      },
-    });
-    return () => { ytPlayerRef.current?.destroy?.(); };
-  }, [ytId, apiReady]);
+      });
+    })();
+    return () => { cancelled = true; ytPlayerRef.current?.destroy?.(); };
+  }, [ytId, apiReady, accountId, classId]);
+
+  // guarda el progreso real cada pocos segundos, y una última vez al cerrar
+  useEffect(() => {
+    if (!accountId || !classId) return;
+    const saveNow = () => {
+      let secs = 0;
+      if (ytId && ytPlayerRef.current?.getCurrentTime) secs = ytPlayerRef.current.getCurrentTime();
+      else if (!ytId && videoRef.current) secs = videoRef.current.currentTime;
+      if (secs > 3) dbSaveProgress(accountId, classId, Math.floor(secs));
+    };
+    const interval = setInterval(saveNow, 8000);
+    return () => { clearInterval(interval); saveNow(); };
+  }, [accountId, classId, ytId]);
 
   // si a los 7s no cargó nada y tampoco avisó un error puntual, mostramos igual el aviso
   useEffect(() => {
@@ -703,31 +868,16 @@ function YtCover({ ytId, style, alt }) {
   );
 }
 
-function Modal({ item, color, Icon, onClose, autoPlay, accountId }) {
-  const [myList, setMyList] = useState([]);
-  const [liked, setLiked] = useState([]);
+function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = [], likedIds = [], onToggleMyList, onToggleLiked }) {
   const [wantsPlay, setWantsPlay] = useState(autoPlay);
   useEffect(() => { setWantsPlay(autoPlay); }, [item?.id, autoPlay]);
-  useEffect(() => {
-    if (!accountId) { setMyList([]); setLiked([]); return; }
-    dbFetchIdList("my_list", accountId).then(setMyList);
-    dbFetchIdList("liked", accountId).then(setLiked);
-  }, [accountId]);
   if (!item) return null;
   const ytId = getYouTubeId(item.videoUrl);
 
-  const inMyList = myList.includes(item.id);
-  const isLiked = liked.includes(item.id);
-  const toggleMyList = () => {
-    const next = inMyList ? myList.filter((id) => id !== item.id) : [...myList, item.id];
-    setMyList(next);
-    if (inMyList) dbRemoveFromList("my_list", accountId, item.id); else dbAddToList("my_list", accountId, item.id);
-  };
-  const toggleLiked = () => {
-    const next = isLiked ? liked.filter((id) => id !== item.id) : [...liked, item.id];
-    setLiked(next);
-    if (isLiked) dbRemoveFromList("liked", accountId, item.id); else dbAddToList("liked", accountId, item.id);
-  };
+  const inMyList = myListIds.includes(item.id);
+  const isLiked = likedIds.includes(item.id);
+  const toggleMyList = () => onToggleMyList && onToggleMyList(item.id);
+  const toggleLiked = () => onToggleLiked && onToggleLiked(item.id);
 
   const pillBtn = { background: "rgba(120,120,120,0.4)", border: "2px solid rgba(255,255,255,0.5)", borderRadius: "50%", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" };
 
@@ -746,7 +896,7 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId }) {
         {/* CABECERA: reproductor real (si el usuario tocó "Reproducir"), vista previa (si tocó "Más información"), o aviso si no hay video */}
         <div style={{ position: "relative" }}>
           {item.videoUrl && wantsPlay && (
-            <ClassPlayer key={item.id} ytId={ytId} rawUrl={item.videoUrl} title={item.title} />
+            <ClassPlayer key={item.id} ytId={ytId} rawUrl={item.videoUrl} title={item.title} accountId={accountId} classId={item.id} />
           )}
           {item.videoUrl && !wantsPlay && (
             <div style={{ position: "relative", height: 320, background: "#000" }}>
@@ -1157,9 +1307,32 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
   const [accountOpen, setAccountOpen] = useState(false);
   const allClassesForFeatured = getAllClasses(subjects).filter((c) => c.videoUrl);
   const featuredPool = allClassesForFeatured.length > 0 ? allClassesForFeatured.slice(0, 5) : [];
-  const continueWatching = allClassesForFeatured.slice(0, 4);
   const featured = featuredPool.length ? featuredPool[featuredIndex % featuredPool.length] : null;
   const featuredYtId = featured ? getYouTubeId(featured.videoUrl) : null;
+
+  // "Seguir viendo" con progreso real (guardado en Supabase mientras se mira cada clase)
+  const [progressMap, setProgressMap] = useState({});
+  useEffect(() => {
+    if (!profile?.id) { setProgressMap({}); return; }
+    dbFetchProgress(profile.id).then(setProgressMap);
+    // se vuelve a pedir cada vez que se cierra el modal, para reflejar lo recién visto
+  }, [profile?.id, modalItem]);
+
+  const continueWatching = Object.entries(progressMap)
+    .map(([classId, p]) => {
+      const cls = allClassesForFeatured.find((c) => c.id === classId);
+      if (!cls) return null;
+      const durSecs = getDurationSeconds(cls);
+      const pct = durSecs ? Math.min(97, Math.round((p.seconds / durSecs) * 100)) : null;
+      if (pct != null && pct < 3) return null; // recién arrancado, no vale la pena mostrarlo
+      return { ...cls, progress: pct, updatedAt: p.updatedAt };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+    .slice(0, 10);
+
+  // Top 10 por vistas reales (guardadas cada vez que alguien le da Reproducir)
+  const top10 = [...allClassesForFeatured].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40);
@@ -1177,13 +1350,28 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
   }, [heroPaused, featuredPool.length]);
 
   const [myListIds, setMyListIds] = useState([]);
+  const [likedIds, setLikedIds] = useState([]);
 
   useEffect(() => {
-    if (!profile?.id) { setMyListIds([]); return; }
+    if (!profile?.id) { setMyListIds([]); setLikedIds([]); return; }
     dbFetchIdList("my_list", profile.id).then(setMyListIds);
+    dbFetchIdList("liked", profile.id).then(setLikedIds);
     // se vuelve a pedir cada vez que se abre/cierra el modal, por si el
-    // alumno agregó o sacó algo de "Mi lista" mientras estaba mirando una clase
+    // alumno agregó o sacó algo de "Mi lista"/"Me gusta" mientras miraba una clase
   }, [profile?.id, modalItem]);
+
+  const toggleMyList = (classId) => {
+    const inList = myListIds.includes(classId);
+    const next = inList ? myListIds.filter((id) => id !== classId) : [...myListIds, classId];
+    setMyListIds(next);
+    if (inList) dbRemoveFromList("my_list", profile?.id, classId); else dbAddToList("my_list", profile?.id, classId);
+  };
+  const toggleLiked = (classId) => {
+    const inList = likedIds.includes(classId);
+    const next = inList ? likedIds.filter((id) => id !== classId) : [...likedIds, classId];
+    setLikedIds(next);
+    if (inList) dbRemoveFromList("liked", profile?.id, classId); else dbAddToList("liked", profile?.id, classId);
+  };
 
   const openModal = (item, subject, mode = "play") => {
     setModalItem(item);
@@ -1407,7 +1595,10 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
         padding: `0 ${GUTTER} 60px`, marginTop: -40,
       }}>
         {continueWatching.length > 0 && (
-          <Row title="Seguir viendo" items={continueWatching} onOpen={(item) => openModal(item, { color: item.subjectColor, icon: item.icon })} />
+          <Row title="Seguir viendo" items={continueWatching} onOpen={(item) => openModal(item, { color: item.subjectColor, icon: item.icon })} myListIds={myListIds} onToggleMyList={toggleMyList} />
+        )}
+        {top10.length > 0 && (
+          <Top10Row title="Top 10 en Chacaflix hoy" items={top10} onOpen={(item) => openModal(item, { color: item.subjectColor, icon: item.icon })} myListIds={myListIds} onToggleMyList={toggleMyList} />
         )}
         {subjects.filter((s) => s.classes.length > 0).map((s) => (
           <Row
@@ -1415,6 +1606,8 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
             title={s.name}
             items={s.classes.map((c) => ({ ...c, color: s.color, icon: s.icon, subjectName: s.name }))}
             onOpen={(item) => openModal(item, s)}
+            myListIds={myListIds}
+            onToggleMyList={toggleMyList}
           />
         ))}
       </div>
@@ -1498,7 +1691,18 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
         </div>
       )}
 
-      <Modal item={modalItem} color={modalColor} Icon={modalIcon} onClose={() => setModalItem(null)} autoPlay={modalAutoPlay} accountId={profile?.id} />
+      <Modal
+        item={modalItem}
+        color={modalColor}
+        Icon={modalIcon}
+        onClose={() => setModalItem(null)}
+        autoPlay={modalAutoPlay}
+        accountId={profile?.id}
+        myListIds={myListIds}
+        likedIds={likedIds}
+        onToggleMyList={toggleMyList}
+        onToggleLiked={toggleLiked}
+      />
     </div>
   );
 }
@@ -1581,8 +1785,8 @@ function AdminDashboard({ subjects, onAddClass, onUpdateClass, onDeleteClass, on
 
   const askConfirm = (opts) => setConfirmState(opts);
 
-  const openNewClass = (subjectId, ciclo) => setClassForm({ id: null, subjectId: subjectId || subjects[0]?.id || "", ciclo: ciclo || "basico", title: "", prof: "", desc: "", videoUrl: "", thumbnail: "", duration: "" });
-  const openEditClass = (c) => setClassForm({ id: c.id, subjectId: c.subjectId, ciclo: c.ciclo || "basico", title: c.title, prof: c.prof, desc: c.desc, videoUrl: c.videoUrl || "", thumbnail: c.thumbnail || "", duration: c.duration || "" });
+  const openNewClass = (subjectId, ciclo) => setClassForm({ id: null, subjectId: subjectId || subjects[0]?.id || "", ciclo: ciclo || "basico", title: "", prof: "", desc: "", videoUrl: "", thumbnail: "", duration: "", durationSeconds: null });
+  const openEditClass = (c) => setClassForm({ id: c.id, subjectId: c.subjectId, ciclo: c.ciclo || "basico", title: c.title, prof: c.prof, desc: c.desc, videoUrl: c.videoUrl || "", thumbnail: c.thumbnail || "", duration: c.duration || "", durationSeconds: c.durationSeconds || null });
 
   const openNewSubject = () => setSubjectForm({ id: null, name: "", color: SUBJECT_COLOR_OPTIONS[subjects.length % SUBJECT_COLOR_OPTIONS.length], iconKey: ICON_OPTIONS[0] });
   const openEditSubject = (s) => setSubjectForm({ id: s.id, name: s.name, color: s.color, iconKey: s.iconKey });
@@ -1956,7 +2160,7 @@ function ClassFormModal({ form, subjects, onClose, onSave }) {
     setCalculating(true);
     const seconds = await fetchYouTubeDuration(ytId);
     setCalculating(false);
-    setData((d) => ({ ...d, duration: seconds ? formatDurationFromSeconds(seconds) : d.duration || "—" }));
+    setData((d) => ({ ...d, duration: seconds ? formatDurationFromSeconds(seconds) : d.duration || "—", durationSeconds: seconds || d.durationSeconds || null }));
   };
 
   const valid = data.subjectId && data.ciclo && data.title.trim() && data.prof.trim() && data.desc.trim() && data.videoUrl.trim();

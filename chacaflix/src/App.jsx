@@ -958,18 +958,21 @@ async function dbDeleteAccount(id) {
    de autor), oscurecido igual que el fondo de login real de Netflix.
    ============================================================ */
 function AuthBackground() {
-  // fotos reales y gratuitas (Picsum/Unsplash), sin problema de derechos de autor,
-  // con un "seed" fijo por tile para que la foto no cambie en cada re-render
-  const tileIds = Array.from({ length: 56 }).map((_, i) => `chacaflix-tile-${i}`);
+  // fotos reales y gratuitas (Picsum/Unsplash), sin problema de derechos de autor.
+  // Van chicas y con prioridad baja: total, quedan oscurecidas encima, no hace
+  // falta que sean pesadas para verse bien.
+  const tileIds = Array.from({ length: 32 }).map((_, i) => `chacaflix-tile-${i}`);
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 0, overflow: "hidden", background: BG }}>
       <div style={{ position: "absolute", inset: "-4%", display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 6 }}>
         {tileIds.map((seed, i) => (
           <div key={i} style={{ aspectRatio: "2 / 3", borderRadius: 4, overflow: "hidden", background: "#111" }}>
             <img
-              src={`https://picsum.photos/seed/${seed}/300/450`}
+              src={`https://picsum.photos/seed/${seed}/120/180`}
               alt=""
               loading="lazy"
+              decoding="async"
+              fetchpriority="low"
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
           </div>

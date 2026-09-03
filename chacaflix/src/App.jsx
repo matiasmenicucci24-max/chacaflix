@@ -366,15 +366,15 @@ function Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
   };
 
   return (
-    <div style={{ marginBottom: 40, position: "relative" }}>
+    <div style={{ marginBottom: -30, position: "relative" }}>
       <h2 style={{ color: "#fff", fontSize: 20, fontWeight: 700, margin: "0 0 12px 4px", fontFamily: "Helvetica Neue, Arial, sans-serif" }}>
         {title}
       </h2>
-      <div style={{ position: "relative" }}>
+      <div style={{ position: "relative", marginTop: -50 }}>
         <button
           onClick={() => scrollBy(-1)}
           style={{
-            position: "absolute", left: 0, top: 0, bottom: 0, zIndex: 10, width: 44,
+            position: "absolute", left: 0, top: 50, bottom: 60, zIndex: 10, width: 44,
             background: "linear-gradient(to right, rgba(20,20,20,0.9), transparent)",
             border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
           }}
@@ -383,7 +383,7 @@ function Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
         </button>
         <div
           ref={scrollerRef}
-          style={{ display: "flex", gap: 6, overflowX: "auto", scrollbarWidth: "none", padding: "4px 4px" }}
+          style={{ display: "flex", gap: 6, overflowX: "auto", overflowY: "visible", scrollbarWidth: "none", padding: "50px 4px 60px" }}
           className="no-scrollbar"
         >
           {items.map((c) => {
@@ -442,7 +442,7 @@ function Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
         <button
           onClick={() => scrollBy(1)}
           style={{
-            position: "absolute", right: 0, top: 0, bottom: 0, zIndex: 10, width: 44,
+            position: "absolute", right: 0, top: 50, bottom: 60, zIndex: 10, width: 44,
             background: "linear-gradient(to left, rgba(20,20,20,0.9), transparent)",
             border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
           }}
@@ -464,18 +464,18 @@ function Top10Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
   const handleLeave = () => { clearTimeout(hoverTimer.current); setHoveredId(null); };
 
   return (
-    <div style={{ marginBottom: 40, position: "relative" }}>
+    <div style={{ marginBottom: -30, position: "relative" }}>
       <h2 style={{ color: "#fff", fontSize: 20, fontWeight: 700, margin: "0 0 12px 4px", fontFamily: "Helvetica Neue, Arial, sans-serif" }}>
         {title}
       </h2>
-      <div style={{ position: "relative" }}>
+      <div style={{ position: "relative", marginTop: -50 }}>
         <button
           onClick={() => scrollBy(-1)}
-          style={{ position: "absolute", left: 0, top: 0, bottom: 0, zIndex: 10, width: 44, background: "linear-gradient(to right, rgba(20,20,20,0.9), transparent)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}
+          style={{ position: "absolute", left: 0, top: 50, bottom: 60, zIndex: 10, width: 44, background: "linear-gradient(to right, rgba(20,20,20,0.9), transparent)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}
         >
           <ChevronLeft size={30} />
         </button>
-        <div ref={scrollerRef} style={{ display: "flex", overflowX: "auto", scrollbarWidth: "none", padding: "4px 4px 4px 30px" }} className="no-scrollbar">
+        <div ref={scrollerRef} style={{ display: "flex", overflowX: "auto", overflowY: "visible", scrollbarWidth: "none", padding: "50px 4px 60px 30px" }} className="no-scrollbar">
           {items.map((c, i) => {
             const expanded = hoveredId === c.id;
             const inList = myListIds.includes(c.id);
@@ -525,7 +525,7 @@ function Top10Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
         </div>
         <button
           onClick={() => scrollBy(1)}
-          style={{ position: "absolute", right: 0, top: 0, bottom: 0, zIndex: 10, width: 44, background: "linear-gradient(to left, rgba(20,20,20,0.9), transparent)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}
+          style={{ position: "absolute", right: 0, top: 50, bottom: 60, zIndex: 10, width: 44, background: "linear-gradient(to left, rgba(20,20,20,0.9), transparent)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}
         >
           <ChevronRight size={30} />
         </button>

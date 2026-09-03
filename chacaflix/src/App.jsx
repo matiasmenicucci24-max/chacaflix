@@ -447,15 +447,13 @@ function ClassPlayer({ ytId, rawUrl, title }) {
       width: "100%",
       height: "100%",
       videoId: ytId,
-      playerVars: { controls: 0, disablekb: 1, rel: 0, modestbranding: 1, iv_load_policy: 3, playsinline: 1, mute: 1, autoplay: 1 },
+      playerVars: { controls: 0, disablekb: 1, rel: 0, modestbranding: 1, iv_load_policy: 3, playsinline: 1, autoplay: 1 },
       events: {
         onReady: (e) => {
           playerLoadedRef.current = true;
           setDuration(e.target.getDuration());
-          // arranca silenciado para esquivar el bloqueo de autoplay de los navegadores;
-          // el botón de volumen deja reactivar el sonido en cualquier momento
-          e.target.mute();
-          setMuted(true);
+          // arranca con sonido: como el modal se abrió con un clic real del
+          // usuario ("Reproducir"), el navegador permite el autoplay sin mutear
           e.target.playVideo();
         },
         onStateChange: (e) => setIsPlaying(e.data === window.YT.PlayerState.PLAYING),

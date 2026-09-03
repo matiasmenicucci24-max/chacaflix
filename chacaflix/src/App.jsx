@@ -386,11 +386,23 @@ function Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
           style={{ display: "flex", gap: 6, overflowX: "auto", overflowY: "visible", scrollbarWidth: "none", padding: "50px 4px 60px" }}
           className="no-scrollbar"
         >
-          {items.map((c) => {
+          {items.map((c, i) => {
             const expanded = hoveredId === c.id;
             const inList = myListIds.includes(c.id);
+            const hoveredIndex = hoveredId ? items.findIndex((x) => x.id === hoveredId) : -1;
+            let neighborShift = 0;
+            if (hoveredIndex !== -1 && !expanded) {
+              if (i === hoveredIndex - 1) neighborShift = -22;
+              else if (i === hoveredIndex + 1) neighborShift = 22;
+            }
             return (
-              <div key={c.id} style={{ flex: "0 0 auto", width: 280, position: "relative" }} onMouseEnter={() => handleEnter(c.id)} onMouseLeave={handleLeave}>
+              <div
+                key={c.id}
+                className="row-card"
+                style={{ flex: "0 0 auto", position: "relative", transform: `translateX(${neighborShift}px)`, transition: "transform 200ms ease" }}
+                onMouseEnter={() => handleEnter(c.id)}
+                onMouseLeave={handleLeave}
+              >
                 <div
                   onClick={() => onOpen(c)}
                   style={{
@@ -479,9 +491,21 @@ function Top10Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
           {items.map((c, i) => {
             const expanded = hoveredId === c.id;
             const inList = myListIds.includes(c.id);
+            const hoveredIndex = hoveredId ? items.findIndex((x) => x.id === hoveredId) : -1;
+            let neighborShift = 0;
+            if (hoveredIndex !== -1 && !expanded) {
+              if (i === hoveredIndex - 1) neighborShift = -22;
+              else if (i === hoveredIndex + 1) neighborShift = 22;
+            }
             return (
-              <div key={c.id} style={{ display: "flex", alignItems: "flex-end", flex: "0 0 auto" }} onMouseEnter={() => handleEnter(c.id)} onMouseLeave={handleLeave}>
+              <div
+                key={c.id}
+                style={{ display: "flex", alignItems: "flex-end", flex: "0 0 auto", transform: `translateX(${neighborShift}px)`, transition: "transform 200ms ease" }}
+                onMouseEnter={() => handleEnter(c.id)}
+                onMouseLeave={handleLeave}
+              >
                 <div
+                  className="top10-number"
                   style={{
                     fontFamily: LOGO_FONT, fontWeight: 900, fontSize: 96, lineHeight: 0.72, letterSpacing: "-4px",
                     color: BG, WebkitTextStroke: "3px #5a5a5a", marginRight: -22, position: "relative", zIndex: 1, userSelect: "none",
@@ -491,8 +515,9 @@ function Top10Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
                 </div>
                 <div
                   onClick={() => onOpen(c)}
+                  className="row-card-top10"
                   style={{
-                    width: 260, cursor: "pointer", borderRadius: 4, overflow: "hidden", background: expanded ? CARD_HOVER_BG : CARD_BG,
+                    cursor: "pointer", borderRadius: 4, overflow: "hidden", background: expanded ? CARD_HOVER_BG : CARD_BG,
                     position: "relative", zIndex: expanded ? 30 : 2, transition: "transform 200ms ease, box-shadow 200ms ease",
                     transform: expanded ? "scale(1.15)" : "scale(1)",
                     boxShadow: expanded ? "0 16px 40px rgba(0,0,0,0.8)" : "none",
@@ -933,7 +958,7 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = []
           </button>
         </div>
 
-        <div style={{ padding: "20px 32px 0" }}>
+        <div className="modal-pad" style={{ padding: "20px 32px 0" }}>
           {item.videoUrl && wantsPlay && (
             <div style={{ fontFamily: "Helvetica Neue, Arial, sans-serif", fontWeight: 800, fontSize: 26, color: "#fff", letterSpacing: "-0.5px" }}>{item.title}</div>
           )}
@@ -947,7 +972,7 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = []
           </div>
         </div>
 
-        <div style={{ padding: "16px 32px 32px", display: "flex", gap: 24 }}>
+        <div className="modal-pad" style={{ padding: "16px 32px 32px", display: "flex", gap: 24 }}>
           <div style={{ flex: 1 }}>
             <div style={{ display: "flex", gap: 10, color: TEXT_MUTED, fontSize: 13, marginBottom: 10 }}>
               <span style={{ color: "#4ADE80", fontWeight: 700 }}>{item.subjectName || "Materia"}</span>
@@ -1289,6 +1314,16 @@ function AuthGate({ onAuthenticated, onAdminRequest }) {
         Acceso administrador
       </button>
       </div>
+
+      <div style={{ maxWidth: 700, width: "100%", padding: "24px 24px 0", marginTop: 40, borderTop: "8px solid rgba(255,255,255,0.08)" }}>
+        <p style={{ color: TEXT_MUTED, fontSize: 13, marginBottom: 16 }}>¿Tenés dudas? Hablá con tu profesor o con administración del colegio.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px 24px", marginBottom: 16 }}>
+          {["Preguntas frecuentes", "Contacto", "Cómo funciona", "Materias disponibles", "Ayuda con la cuenta", "Términos de uso"].map((l) => (
+            <span key={l} style={{ color: TEXT_MUTED, fontSize: 12, textDecoration: "underline", cursor: "default" }}>{l}</span>
+          ))}
+        </div>
+        <p style={{ color: "#555", fontSize: 12 }}>Chacaflix — plataforma interna del colegio.</p>
+      </div>
     </div>
   );
 }
@@ -1456,6 +1491,20 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
         .player-range::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #fff; cursor: pointer; }
         .player-range::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: none; cursor: pointer; }
         .yt-fill, .yt-fill iframe { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; border: 0 !important; }
+
+        /* --- Mobile: tarjetas más chicas, navbar más compacta, modal con menos aire --- */
+        .row-card { width: 280px; }
+        .row-card-top10 { width: 260px; }
+        .navbar-links { gap: 20px; }
+        @media (max-width: 640px) {
+          .row-card { width: 165px; }
+          .row-card-top10 { width: 150px; }
+          .top10-number { font-size: 62px !important; margin-right: -14px !important; }
+          .navbar-links { gap: 12px; overflow-x: auto; }
+          .navbar-links span, .navbar-links button { font-size: 12px !important; white-space: nowrap; }
+          .modal-pad { padding-left: 18px !important; padding-right: 18px !important; }
+          .hero-buttons { flex-wrap: wrap; }
+        }
       `}</style>
 
       {/* NAVBAR */}
@@ -1474,7 +1523,7 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
             <button onClick={() => goTo("home")} style={{ background: "transparent", border: "none", cursor: "pointer", color: RED, fontFamily: LOGO_FONT, fontWeight: 900, fontSize: 28, letterSpacing: "-1px", textTransform: "uppercase", padding: 0, textShadow: "2px 3px 0px #7A0D12, 0 6px 14px rgba(0,0,0,0.6)" }}>
               Chacaflix
             </button>
-            <nav style={{ display: "flex", gap: 20, fontSize: 14 }}>
+            <nav className="navbar-links" style={{ display: "flex", gap: 20, fontSize: 14 }}>
               {[
                 { key: "home", label: "Inicio" },
                 { key: "materias", label: "Materias" },
@@ -1606,7 +1655,7 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
             <div style={{ color: "#d2d2d2", fontSize: 15, margin: "18px 0", lineHeight: 1.5 }}>
               {featured.desc}
             </div>
-            <div style={{ display: "flex", gap: 12, marginBottom: 22 }}>
+            <div className="hero-buttons" style={{ display: "flex", gap: 12, marginBottom: 22 }}>
               <button
                 onClick={() => openModal(featured, featured.subject, "play")}
                 style={{ background: "#fff", border: "none", borderRadius: 4, padding: "12px 26px", fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}

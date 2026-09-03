@@ -5,7 +5,8 @@ import {
   X, Plus, ThumbsUp, Calculator, FlaskConical,
   Landmark, BookOpen, Leaf, Palette, Dumbbell, Atom, Check,
   Rewind, FastForward, Volume2, VolumeX, Sun, Maximize, Minimize,
-  Trash2, Pencil, BarChart3, Users, LayoutDashboard, Lock, ArrowLeft, Loader2, Eye
+  Trash2, Pencil, BarChart3, Users, LayoutDashboard, Lock, ArrowLeft, Loader2, Eye,
+  Smile, Star, Rocket, Ghost, Heart, Zap, Cat, Dog
 } from "lucide-react";
 
 /* ============================================================
@@ -1081,20 +1082,26 @@ function ConfirmDialog({ title = "¿Estás seguro?", message, confirmLabel = "Co
    "hashear" nada de manera segura solo desde el navegador). Sirve para
    separar el contenido por ciclo, no para datos sensibles de verdad.
    ============================================================ */
+function dbAccountToApp(row) {
+  return { id: row.id, username: row.username, password: row.password, ciclo: row.ciclo, color: row.color, avatarIcon: row.avatar_icon || "Smile" };
+}
+function appAccountToDb(acc) {
+  return { username: acc.username, password: acc.password, ciclo: acc.ciclo, color: acc.color, avatar_icon: acc.avatarIcon || "Smile" };
+}
 async function dbFindAccount(username) {
   const { data, error } = await supabase.from("accounts").select("*").ilike("username", username).maybeSingle();
   if (error) throw error;
-  return data;
+  return data ? dbAccountToApp(data) : null;
 }
 async function dbCreateAccount(account) {
-  const { data, error } = await supabase.from("accounts").insert(account).select().single();
+  const { data, error } = await supabase.from("accounts").insert(appAccountToDb(account)).select().single();
   if (error) throw error;
-  return data;
+  return dbAccountToApp(data);
 }
 async function dbFetchAccounts() {
   const { data, error } = await supabase.from("accounts").select("*").order("created_at");
   if (error) throw error;
-  return data;
+  return data.map(dbAccountToApp);
 }
 async function dbDeleteAccount(id) {
   const { error } = await supabase.from("accounts").delete().eq("id", id);
@@ -1134,6 +1141,8 @@ function AuthBackground() {
 }
 
 const ACCOUNT_COLORS = ["#E50914", "#2E86FF", "#22C55E", "#F97316", "#A855F7", "#EAB308"];
+const AVATAR_ICONS = { Smile, Star, Rocket, Ghost, Heart, Zap, Cat, Dog };
+const AVATAR_ICON_OPTIONS = Object.keys(AVATAR_ICONS);
 
 function AuthGate({ onAuthenticated, onAdminRequest }) {
   const [mode, setMode] = useState("login"); // "login" | "register"
@@ -1141,6 +1150,7 @@ function AuthGate({ onAuthenticated, onAdminRequest }) {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [ciclo, setCiclo] = useState("basico");
+  const [avatarIcon, setAvatarIcon] = useState(AVATAR_ICON_OPTIONS[0]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -1161,7 +1171,7 @@ function AuthGate({ onAuthenticated, onAdminRequest }) {
         if (password.length < 4) { setError("La contraseña tiene que tener al menos 4 caracteres."); setLoading(false); return; }
         if (password !== confirmPassword) { setError("Las contraseñas no coinciden."); setLoading(false); return; }
         const account = await dbCreateAccount({
-          username: u, password, ciclo,
+          username: u, password, ciclo, avatarIcon,
           color: ACCOUNT_COLORS[Math.floor(Math.random() * ACCOUNT_COLORS.length)],
         });
         onAuthenticated(account);
@@ -1211,6 +1221,30 @@ function AuthGate({ onAuthenticated, onAdminRequest }) {
               placeholder="Repetir contraseña"
               style={{ width: "100%", background: "#333", border: "1px solid #666", borderRadius: 4, padding: "12px 14px", color: "#fff", fontSize: 15, outline: "none", marginBottom: 16, boxSizing: "border-box" }}
             />
+            <label style={{ display: "block", color: TEXT_MUTED, fontSize: 12, fontWeight: 700, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+              Elegí tu avatar
+            </label>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+              {AVATAR_ICON_OPTIONS.map((key, i) => {
+                const IconComp = AVATAR_ICONS[key];
+                const selected = avatarIcon === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setAvatarIcon(key)}
+                    style={{
+                      width: 44, height: 44, borderRadius: "50%", cursor: "pointer",
+                      background: ACCOUNT_COLORS[i % ACCOUNT_COLORS.length],
+                      border: selected ? "3px solid #fff" : "3px solid transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    <IconComp size={20} color="#fff" />
+                  </button>
+                );
+              })}
+            </div>
+
             <label style={{ display: "block", color: TEXT_MUTED, fontSize: 12, fontWeight: 700, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.03em" }}>
               ¿En qué ciclo estás?
             </label>
@@ -1333,6 +1367,19 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
 
   // Top 10 por vistas reales (guardadas cada vez que alguien le da Reproducir)
   const top10 = [...allClassesForFeatured].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
+
+  // Recomendados: otras clases de materias que ya empezaste a ver, que todavía no viste.
+  // Si sos nuevo y no empezaste nada, te tira un surtido general.
+  const watchedSubjectIds = new Set(
+    Object.keys(progressMap).map((cid) => allClassesForFeatured.find((c) => c.id === cid)?.subjectId).filter(Boolean)
+  );
+  let recommended = allClassesForFeatured.filter((c) => watchedSubjectIds.has(c.subjectId) && !progressMap[c.id]);
+  if (recommended.length < 6) {
+    const already = new Set(recommended.map((c) => c.id));
+    const filler = allClassesForFeatured.filter((c) => !already.has(c.id) && !progressMap[c.id]);
+    recommended = [...recommended, ...filler];
+  }
+  recommended = recommended.slice(0, 10);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40);
@@ -1492,7 +1539,9 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
             <div style={{ position: "relative" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }} onClick={() => { setAccountOpen((v) => !v); setNotifOpen(false); }}>
                 <div style={{ width: 30, height: 30, borderRadius: 6, background: profile?.color || RED, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700 }}>
-                  {profile?.username?.charAt(0)?.toUpperCase() || "A"}
+                  {profile?.avatarIcon && AVATAR_ICONS[profile.avatarIcon]
+                    ? (() => { const AvatarIcon = AVATAR_ICONS[profile.avatarIcon]; return <AvatarIcon size={16} color="#fff" />; })()
+                    : (profile?.username?.charAt(0)?.toUpperCase() || "A")}
                 </div>
                 <ChevronDown size={14} style={{ transform: accountOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
               </div>
@@ -1599,6 +1648,9 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
         )}
         {top10.length > 0 && (
           <Top10Row title="Top 10 en Chacaflix hoy" items={top10} onOpen={(item) => openModal(item, { color: item.subjectColor, icon: item.icon })} myListIds={myListIds} onToggleMyList={toggleMyList} />
+        )}
+        {recommended.length > 0 && (
+          <Row title="Recomendados para vos" items={recommended} onOpen={(item) => openModal(item, { color: item.subjectColor, icon: item.icon })} myListIds={myListIds} onToggleMyList={toggleMyList} />
         )}
         {subjects.filter((s) => s.classes.length > 0).map((s) => (
           <Row
@@ -2064,7 +2116,7 @@ function AdminDashboard({ subjects, onAddClass, onUpdateClass, onDeleteClass, on
               {students.map((p, i) => (
                 <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: i > 0 ? "1px solid #262626" : "none" }}>
                   <div style={{ width: 32, height: 32, borderRadius: 6, background: p.color, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 13 }}>
-                    {p.username.charAt(0).toUpperCase()}
+                    {AVATAR_ICONS[p.avatarIcon] ? (() => { const AvatarIcon = AVATAR_ICONS[p.avatarIcon]; return <AvatarIcon size={16} color="#fff" />; })() : p.username.charAt(0).toUpperCase()}
                   </div>
                   <div style={{ flex: 1, color: "#fff", fontSize: 14 }}>{p.username}</div>
                   <div style={{ background: "#2a2a2a", color: TEXT_MUTED, fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 4, textTransform: "uppercase" }}>
@@ -2294,6 +2346,43 @@ function SubjectFormModal({ form, subjects, onClose, onSave }) {
 }
 
 /* ============================================================
+   PANTALLA DE CARGA TIPO ESQUELETO — bloques grises con un pulso
+   suave que ya dibujan la forma de la página, mientras se conecta
+   con la base de datos (igual que hace Netflix).
+   ============================================================ */
+function HomeSkeleton() {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: BG, overflow: "hidden", fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" }}>
+      <style>{`
+        @keyframes skeletonPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
+        .skel { background: #2a2a2a; border-radius: 4px; animation: skeletonPulse 1.6s ease-in-out infinite; }
+      `}</style>
+
+      <div style={{ padding: `16px ${GUTTER}`, display: "flex", alignItems: "center", gap: 20 }}>
+        <div className="skel" style={{ width: 130, height: 28 }} />
+        <div className="skel" style={{ width: 60, height: 14, marginLeft: 20 }} />
+        <div className="skel" style={{ width: 90, height: 14 }} />
+      </div>
+
+      <div className="skel" style={{ margin: `10px ${GUTTER} 0`, height: "48vh", borderRadius: 8 }} />
+
+      <div style={{ padding: `28px ${GUTTER}` }}>
+        {[0, 1, 2].map((row) => (
+          <div key={row} style={{ marginBottom: 30 }}>
+            <div className="skel" style={{ width: 170, height: 20, marginBottom: 14 }} />
+            <div style={{ display: "flex", gap: 8, overflow: "hidden" }}>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="skel" style={{ width: 240, height: 135, flexShrink: 0, animationDelay: `${i * 80}ms` }} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
    RAÍZ DE LA APP — intro animada → login/registro → app
    ============================================================ */
 export default function ChacaFlix() {
@@ -2340,13 +2429,7 @@ export default function ChacaFlix() {
   // pantallas que necesitan las materias ya cargadas desde la base
   if (stage === "app" || stage === "admin") {
     if (subjectsLoading) {
-      return (
-        <div style={{ position: "fixed", inset: 0, background: BG, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" }}>
-          <Loader2 size={32} color={RED} className="spin" />
-          <div style={{ color: TEXT_MUTED, fontSize: 14 }}>Conectando con la base de datos...</div>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } } .spin { animation: spin 1s linear infinite; }`}</style>
-        </div>
-      );
+      return <HomeSkeleton />;
     }
     if (subjectsError) {
       return (

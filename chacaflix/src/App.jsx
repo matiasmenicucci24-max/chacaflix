@@ -130,7 +130,7 @@ function dbClassToApp(row) {
   return {
     id: row.id, subjectId: row.subject_id, ciclo: row.ciclo, title: row.title, prof: row.prof,
     desc: row.description, videoUrl: row.video_url, thumbnail: row.thumbnail, duration: row.duration,
-    durationSeconds: row.duration_seconds || null, views: row.views || 0,
+    durationSeconds: row.duration_seconds || null, views: row.views || 0, createdAt: row.created_at,
   };
 }
 function appClassToDb(cls, subjectId) {
@@ -413,7 +413,10 @@ function Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
                     zIndex: expanded ? 30 : 1,
                   }}
                 >
-                  <Thumb classItem={c} color={c.color || c.subjectColor} Icon={c.icon || Calculator} tall />
+                  <div style={{ position: "relative" }}>
+                    <Thumb classItem={c} color={c.color || c.subjectColor} Icon={c.icon || Calculator} tall />
+                    {expanded && getYouTubeId(c.videoUrl) && <HoverPreview ytId={getYouTubeId(c.videoUrl)} />}
+                  </div>
                   {c.progress != null && (
                     <div style={{ height: 3, background: "#4d4d4d", width: "100%" }}>
                       <div style={{ height: "100%", width: `${c.progress}%`, background: RED }} />
@@ -523,7 +526,10 @@ function Top10Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
                     boxShadow: expanded ? "0 16px 40px rgba(0,0,0,0.8)" : "none",
                   }}
                 >
-                  <Thumb classItem={c} color={c.color || c.subjectColor} Icon={c.icon || Calculator} tall />
+                  <div style={{ position: "relative" }}>
+                    <Thumb classItem={c} color={c.color || c.subjectColor} Icon={c.icon || Calculator} tall />
+                    {expanded && getYouTubeId(c.videoUrl) && <HoverPreview ytId={getYouTubeId(c.videoUrl)} />}
+                  </div>
                   <div style={{ padding: "10px 12px 14px" }}>
                     {c.videoUrl && (
                       <div style={{ color: "#fff", fontSize: 13, fontWeight: 700, marginBottom: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</div>
@@ -585,13 +591,38 @@ function fmtTime(s) {
 
 const iconBtnStyle = { background: "transparent", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", padding: 4 };
 
+// Vista previa que se reproduce sola, muda, dentro de la miniatura al pasar el
+// mouse (igual que Netflix). Un solo player a la vez, ya que solo una tarjeta
+// puede estar expandida por fila.
+function HoverPreview({ ytId }) {
+  const apiReady = useYouTubeAPI();
+  const containerRef = useRef(null);
+  const playerRef = useRef(null);
+
+  useEffect(() => {
+    if (!ytId || !apiReady || !containerRef.current) return;
+    playerRef.current = new window.YT.Player(containerRef.current, {
+      width: "100%",
+      height: "100%",
+      videoId: ytId,
+      playerVars: { autoplay: 1, mute: 1, controls: 0, disablekb: 1, rel: 0, modestbranding: 1, playsinline: 1, loop: 1, playlist: ytId },
+      events: {
+        onReady: (e) => { e.target.mute(); e.target.playVideo(); },
+      },
+    });
+    return () => { try { playerRef.current?.destroy?.(); } catch {} };
+  }, [ytId, apiReady]);
+
+  return <div ref={containerRef} className="yt-fill" style={{ position: "absolute", inset: 0 }} />;
+}
+
 /* ============================================================
    REPRODUCTOR PROPIO — controles estilo Netflix
    Funciona tanto con videos de YouTube (usa la API oficial y
    oculta los controles nativos de YouTube) como con un link de
    video directo (usa la etiqueta <video> normal de HTML).
    ============================================================ */
-function ClassPlayer({ ytId, rawUrl, title, accountId, classId }) {
+function ClassPlayer({ ytId, rawUrl, title, accountId, classId, nextItem, onNext }) {
   const apiReady = useYouTubeAPI();
   const ytContainerRef = useRef(null);
   const ytPlayerRef = useRef(null);
@@ -743,6 +774,23 @@ function ClassPlayer({ ytId, rawUrl, title, accountId, classId }) {
 
   const progressPct = duration ? (current / duration) * 100 : 0;
 
+  // aviso de "siguiente clase" en los últimos 15 segundos, con cuenta regresiva
+  const [nextDismissed, setNextDismissed] = useState(false);
+  const showNextPrompt = !!nextItem && !nextDismissed && duration > 0 && (duration - current) <= 15 && (duration - current) > 0;
+  const [nextCountdown, setNextCountdown] = useState(null);
+  useEffect(() => {
+    if (!showNextPrompt) { setNextCountdown(null); return; }
+    setNextCountdown(10);
+    const iv = setInterval(() => {
+      setNextCountdown((c) => {
+        if (c <= 1) { clearInterval(iv); onNext && onNext(); return 0; }
+        return c - 1;
+      });
+    }, 1000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showNextPrompt]);
+
   // en pantalla completa los controles se agrandan para que no se vean diminutos
   const iconSize = isFullscreen ? 28 : 18;
   const bigIconSize = isFullscreen ? 20 : 20;
@@ -811,6 +859,31 @@ function ClassPlayer({ ytId, rawUrl, title, accountId, classId }) {
           <div style={{ width: centralPlaySize, height: centralPlaySize, borderRadius: "50%", background: "rgba(0,0,0,0.55)", border: "2px solid rgba(255,255,255,0.8)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Play size={centralPlayIcon} color="#fff" fill="#fff" style={{ marginLeft: 3 }} />
           </div>
+        </div>
+      )}
+
+      {/* aviso de siguiente clase, con cuenta regresiva, en los últimos segundos */}
+      {showNextPrompt && (
+        <div
+          style={{
+            position: "absolute", bottom: 90, right: 20, width: 260, background: "#141414", border: "1px solid #333",
+            borderRadius: 8, padding: 14, zIndex: 50, boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ color: TEXT_MUTED, fontSize: 11, fontWeight: 700, textTransform: "uppercase" }}>Siguiente clase</span>
+            <button onClick={() => setNextDismissed(true)} style={{ background: "transparent", border: "none", color: "#fff", cursor: "pointer", padding: 0 }}>
+              <X size={14} />
+            </button>
+          </div>
+          <div style={{ color: "#fff", fontSize: 14, fontWeight: 700, marginBottom: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{nextItem.title}</div>
+          <button
+            onClick={onNext}
+            style={{ width: "100%", background: RED, border: "none", color: "#fff", padding: "8px 0", borderRadius: 4, fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+          >
+            Reproducir ahora {nextCountdown != null ? `(${nextCountdown})` : ""}
+          </button>
         </div>
       )}
 
@@ -894,7 +967,7 @@ function YtCover({ ytId, style, alt }) {
   );
 }
 
-function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = [], likedIds = [], onToggleMyList, onToggleLiked }) {
+function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = [], likedIds = [], onToggleMyList, onToggleLiked, nextItem, onNext }) {
   const [wantsPlay, setWantsPlay] = useState(autoPlay);
   useEffect(() => { setWantsPlay(autoPlay); }, [item?.id, autoPlay]);
   if (!item) return null;
@@ -922,7 +995,7 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = []
         {/* CABECERA: reproductor real (si el usuario tocó "Reproducir"), vista previa (si tocó "Más información"), o aviso si no hay video */}
         <div style={{ position: "relative" }}>
           {item.videoUrl && wantsPlay && (
-            <ClassPlayer key={item.id} ytId={ytId} rawUrl={item.videoUrl} title={item.title} accountId={accountId} classId={item.id} />
+            <ClassPlayer key={item.id} ytId={ytId} rawUrl={item.videoUrl} title={item.title} accountId={accountId} classId={item.id} nextItem={nextItem} onNext={onNext} />
           )}
           {item.videoUrl && !wantsPlay && (
             <div style={{ position: "relative", height: 320, background: "#000" }}>
@@ -1130,6 +1203,14 @@ async function dbFetchAccounts() {
 }
 async function dbDeleteAccount(id) {
   const { error } = await supabase.from("accounts").delete().eq("id", id);
+  if (error) throw error;
+}
+async function dbUpdateAccount(id, patch) {
+  const payload = {};
+  if (patch.password !== undefined) payload.password = patch.password;
+  if (patch.avatarIcon !== undefined) payload.avatar_icon = patch.avatarIcon;
+  if (patch.ciclo !== undefined) payload.ciclo = patch.ciclo;
+  const { error } = await supabase.from("accounts").update(payload).eq("id", id);
   if (error) throw error;
 }
 /* ============================================================
@@ -1358,7 +1439,134 @@ function CardGrid({ items, onOpen, emptyMessage }) {
   );
 }
 
-function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmin }) {
+/* ============================================================
+   MI CUENTA — cambiar avatar, contraseña y ciclo
+   ============================================================ */
+function AccountPage({ profile, onUpdate }) {
+  const [avatarIcon, setAvatarIcon] = useState(profile?.avatarIcon || AVATAR_ICON_OPTIONS[0]);
+  const [ciclo, setCiclo] = useState(profile?.ciclo || "basico");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const saveAvatarAndCiclo = async () => {
+    setError(""); setSuccess(""); setSaving(true);
+    try {
+      await dbUpdateAccount(profile.id, { avatarIcon, ciclo });
+      onUpdate({ avatarIcon, ciclo });
+      setSuccess("¡Listo! Tus cambios se guardaron.");
+    } catch (e) {
+      setError("No se pudo guardar: " + (e.message || "error desconocido"));
+    }
+    setSaving(false);
+  };
+
+  const changePassword = async () => {
+    setError(""); setSuccess("");
+    if (currentPassword !== profile.password) { setError("La contraseña actual no es correcta."); return; }
+    if (newPassword.length < 4) { setError("La contraseña nueva tiene que tener al menos 4 caracteres."); return; }
+    if (newPassword !== confirmPassword) { setError("Las contraseñas nuevas no coinciden."); return; }
+    setSaving(true);
+    try {
+      await dbUpdateAccount(profile.id, { password: newPassword });
+      onUpdate({ password: newPassword });
+      setCurrentPassword(""); setNewPassword(""); setConfirmPassword("");
+      setSuccess("¡Listo! Tu contraseña se actualizó.");
+    } catch (e) {
+      setError("No se pudo guardar: " + (e.message || "error desconocido"));
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ maxWidth: 700, margin: "0 auto", padding: "120px 24px 60px" }}>
+      <h1 style={{ color: "#fff", fontSize: 28, fontWeight: 700, marginBottom: 24 }}>Mi cuenta</h1>
+
+      {error && <div style={{ background: "#3a1013", border: `1px solid ${RED}`, color: "#fff", padding: "10px 14px", borderRadius: 4, fontSize: 13, marginBottom: 16 }}>{error}</div>}
+      {success && <div style={{ background: "#0f3a1a", border: "1px solid #22C55E", color: "#fff", padding: "10px 14px", borderRadius: 4, fontSize: 13, marginBottom: 16 }}>{success}</div>}
+
+      <div style={{ background: CARD_BG, borderRadius: 8, padding: 24, marginBottom: 20 }}>
+        <div style={{ color: TEXT_MUTED, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 4 }}>Usuario</div>
+        <div style={{ color: "#fff", fontSize: 16, marginBottom: 22 }}>{profile?.username}</div>
+
+        <div style={{ color: TEXT_MUTED, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 10 }}>Avatar</div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 22 }}>
+          {AVATAR_ICON_OPTIONS.map((key, i) => {
+            const IconComp = AVATAR_ICONS[key];
+            const selected = avatarIcon === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setAvatarIcon(key)}
+                style={{
+                  width: 48, height: 48, borderRadius: "50%", cursor: "pointer",
+                  background: ACCOUNT_COLORS[i % ACCOUNT_COLORS.length],
+                  border: selected ? "3px solid #fff" : "3px solid transparent",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                <IconComp size={22} color="#fff" />
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ color: TEXT_MUTED, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 10 }}>Ciclo</div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
+          {CYCLE_LIST.map((c) => (
+            <button
+              key={c.key}
+              onClick={() => setCiclo(c.key)}
+              style={{
+                flex: "1 1 160px", textAlign: "left", background: ciclo === c.key ? "#3a1013" : "#2a2a2a",
+                border: ciclo === c.key ? `1px solid ${RED}` : "1px solid #444", borderRadius: 6, padding: "10px 14px", cursor: "pointer",
+              }}
+            >
+              <div style={{ color: "#fff", fontSize: 14, fontWeight: 700 }}>{c.label}</div>
+              <div style={{ color: TEXT_MUTED, fontSize: 12 }}>{c.sublabel}</div>
+            </button>
+          ))}
+        </div>
+
+        <button
+          disabled={saving}
+          onClick={saveAvatarAndCiclo}
+          style={{ background: RED, border: "none", color: "#fff", padding: "10px 22px", borderRadius: 4, fontWeight: 700, fontSize: 14, cursor: saving ? "default" : "pointer" }}
+        >
+          {saving ? "Guardando..." : "Guardar cambios"}
+        </button>
+      </div>
+
+      <div style={{ background: CARD_BG, borderRadius: 8, padding: 24 }}>
+        <div style={{ color: TEXT_MUTED, fontSize: 12, fontWeight: 700, textTransform: "uppercase", marginBottom: 12 }}>Cambiar contraseña</div>
+        <input
+          type="password" placeholder="Contraseña actual" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)}
+          style={{ width: "100%", background: "#2a2a2a", border: "1px solid #444", borderRadius: 4, padding: "10px 12px", color: "#fff", fontSize: 14, outline: "none", marginBottom: 10, boxSizing: "border-box" }}
+        />
+        <input
+          type="password" placeholder="Contraseña nueva" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+          style={{ width: "100%", background: "#2a2a2a", border: "1px solid #444", borderRadius: 4, padding: "10px 12px", color: "#fff", fontSize: 14, outline: "none", marginBottom: 10, boxSizing: "border-box" }}
+        />
+        <input
+          type="password" placeholder="Repetir contraseña nueva" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
+          style={{ width: "100%", background: "#2a2a2a", border: "1px solid #444", borderRadius: 4, padding: "10px 12px", color: "#fff", fontSize: 14, outline: "none", marginBottom: 16, boxSizing: "border-box" }}
+        />
+        <button
+          disabled={saving}
+          onClick={changePassword}
+          style={{ background: "transparent", border: "1px solid #666", color: "#fff", padding: "10px 22px", borderRadius: 4, fontWeight: 700, fontSize: 14, cursor: saving ? "default" : "pointer" }}
+        >
+          Cambiar contraseña
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmin, onUpdateProfile }) {
   // el alumno solo tiene que ver las materias y clases de su propio ciclo;
   // filtramos acá una sola vez y el resto del componente ya usa "subjects" filtrado.
   const subjects = allSubjects.map((s) => ({ ...s, classes: s.classes.filter((c) => c.ciclo === profile?.ciclo) }));
@@ -1402,6 +1610,12 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
 
   // Top 10 por vistas reales (guardadas cada vez que alguien le da Reproducir)
   const top10 = [...allClassesForFeatured].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 10);
+
+  // Recién agregado: las últimas clases que subió el admin, por fecha real
+  const recentlyAdded = [...allClassesForFeatured]
+    .filter((c) => c.createdAt)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 10);
 
   // Recomendados: otras clases de materias que ya empezaste a ver, que todavía no viste.
   // Si sos nuevo y no empezaste nada, te tira un surtido general.
@@ -1462,6 +1676,20 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
     setModalAutoPlay(mode === "play");
     if (mode === "play" && item.videoUrl) dbIncrementView(item.id);
   };
+
+  // busca la clase que sigue dentro de la misma materia, para sugerirla al terminar el video
+  const getNextInSubject = (item) => {
+    if (!item?.subjectId) return null;
+    const subj = subjects.find((s) => s.id === item.subjectId);
+    if (!subj) return null;
+    const playable = subj.classes.filter((c) => c.videoUrl);
+    const idx = playable.findIndex((c) => c.id === item.id);
+    if (idx === -1 || playable.length < 2) return null;
+    const next = playable[(idx + 1) % playable.length];
+    return { ...next, color: subj.color, icon: subj.icon, subjectName: subj.name, subject: subj };
+  };
+  const nextItem = modalItem ? getNextInSubject(modalItem) : null;
+  const handleNext = () => { if (nextItem) openModal(nextItem, nextItem.subject, "play"); };
 
   const goTo = (v) => {
     setView(v);
@@ -1600,6 +1828,9 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
                     Conectado como <strong style={{ color: "#fff" }}>{profile?.username}</strong>
                     <div style={{ marginTop: 2 }}>{CYCLES[profile?.ciclo]?.label}</div>
                   </div>
+                  <button onClick={() => { setAccountOpen(false); goTo("cuenta"); }} style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", color: "#fff", padding: "10px", fontSize: 13, cursor: "pointer", borderTop: "1px solid #2a2a2a" }}>
+                    Mi cuenta
+                  </button>
                   {onOpenAdmin && (
                     <button onClick={() => { setAccountOpen(false); onOpenAdmin(); }} style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", color: "#fff", padding: "10px", fontSize: 13, cursor: "pointer", borderTop: "1px solid #2a2a2a" }}>
                       Panel de administrador
@@ -1694,6 +1925,9 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
       }}>
         {continueWatching.length > 0 && (
           <Row title="Seguir viendo" items={continueWatching} onOpen={(item) => openModal(item, { color: item.subjectColor, icon: item.icon })} myListIds={myListIds} onToggleMyList={toggleMyList} />
+        )}
+        {recentlyAdded.length > 0 && (
+          <Row title="Recién agregado" items={recentlyAdded} onOpen={(item) => openModal(item, { color: item.subjectColor, icon: item.icon })} myListIds={myListIds} onToggleMyList={toggleMyList} />
         )}
         {top10.length > 0 && (
           <Top10Row title="Top 10 en Chacaflix hoy" items={top10} onOpen={(item) => openModal(item, { color: item.subjectColor, icon: item.icon })} myListIds={myListIds} onToggleMyList={toggleMyList} />
@@ -1792,6 +2026,10 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
         </div>
       )}
 
+      {view === "cuenta" && (
+        <AccountPage profile={profile} onUpdate={onUpdateProfile} />
+      )}
+
       <Modal
         item={modalItem}
         color={modalColor}
@@ -1803,6 +2041,8 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
         likedIds={likedIds}
         onToggleMyList={toggleMyList}
         onToggleLiked={toggleLiked}
+        nextItem={nextItem}
+        onNext={handleNext}
       />
     </div>
   );
@@ -2516,6 +2756,7 @@ export default function ChacaFlix() {
       onSwitchProfile={handleLogout}
       subjects={subjects}
       onOpenAdmin={() => setStage("adminLogin")}
+      onUpdateProfile={(patch) => setAccount((prev) => ({ ...prev, ...patch }))}
     />
   );
 }

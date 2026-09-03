@@ -958,23 +958,20 @@ async function dbDeleteAccount(id) {
    de autor), oscurecido igual que el fondo de login real de Netflix.
    ============================================================ */
 function AuthBackground() {
-  const tiles = Array.from({ length: 56 }).map((_, i) => ({
-    color: SUBJECT_COLOR_OPTIONS[(i * 5) % SUBJECT_COLOR_OPTIONS.length],
-    Icon: ICONS[ICON_OPTIONS[(i * 3) % ICON_OPTIONS.length]],
-  }));
+  // fotos reales y gratuitas (Picsum/Unsplash), sin problema de derechos de autor,
+  // con un "seed" fijo por tile para que la foto no cambie en cada re-render
+  const tileIds = Array.from({ length: 56 }).map((_, i) => `chacaflix-tile-${i}`);
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 0, overflow: "hidden", background: BG }}>
       <div style={{ position: "absolute", inset: "-4%", display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 6 }}>
-        {tiles.map((t, i) => (
-          <div
-            key={i}
-            style={{
-              aspectRatio: "2 / 3", borderRadius: 4, overflow: "hidden",
-              background: `linear-gradient(150deg, ${t.color}CC 0%, ${t.color}55 60%, transparent 100%)`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <t.Icon size={22} color="rgba(255,255,255,0.35)" />
+        {tileIds.map((seed, i) => (
+          <div key={i} style={{ aspectRatio: "2 / 3", borderRadius: 4, overflow: "hidden", background: "#111" }}>
+            <img
+              src={`https://picsum.photos/seed/${seed}/300/450`}
+              alt=""
+              loading="lazy"
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
           </div>
         ))}
       </div>

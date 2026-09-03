@@ -1019,7 +1019,8 @@ function AuthGate({ onAuthenticated, onAdminRequest }) {
         onAuthenticated(account);
       }
     } catch (e) {
-      setError("No se pudo conectar con la base de datos. Probá de nuevo en un rato.");
+      console.error(e);
+      setError(`No se pudo conectar con la base de datos: ${e.message || e.details || "error desconocido"}`);
       setLoading(false);
     }
   };

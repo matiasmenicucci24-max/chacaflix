@@ -325,7 +325,8 @@ function Thumb({ classItem, color, Icon, tall }) {
     <div
       style={{
         width: "100%",
-        height: tall ? 220 : "100%",
+        height: tall ? "auto" : "100%",
+        aspectRatio: tall ? "16 / 9" : undefined,
         position: "relative",
         overflow: "hidden",
         background: ytThumb ? "#000" : `linear-gradient(150deg, ${color}CC 0%, ${color}55 45%, ${BG} 100%)`,
@@ -350,6 +351,14 @@ function Thumb({ classItem, color, Icon, tall }) {
   );
 }
 
+// En celular/tablet no existe "pasar el mouse", así que la tarjeta expandida
+// con vista previa no tiene sentido ahí (y rompía el toque). La desactivamos
+// en dispositivos táctiles: ahí, tocar la tarjeta abre el video directo.
+function isTouchDevice() {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia && window.matchMedia("(hover: none), (pointer: coarse)").matches;
+}
+
 function Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
   const scrollerRef = useRef(null);
   const [hoveredId, setHoveredId] = useState(null);
@@ -357,10 +366,12 @@ function Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
   const scrollBy = (dir) => scrollerRef.current?.scrollBy({ left: dir * 620, behavior: "smooth" });
 
   const handleEnter = (id) => {
+    if (isTouchDevice()) return;
     clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => setHoveredId(id), 350);
   };
   const handleLeave = () => {
+    if (isTouchDevice()) return;
     clearTimeout(hoverTimer.current);
     setHoveredId(null);
   };
@@ -475,8 +486,8 @@ function Top10Row({ title, items, onOpen, myListIds = [], onToggleMyList }) {
   const [hoveredId, setHoveredId] = useState(null);
   const hoverTimer = useRef(null);
   const scrollBy = (dir) => scrollerRef.current?.scrollBy({ left: dir * 620, behavior: "smooth" });
-  const handleEnter = (id) => { clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => setHoveredId(id), 350); };
-  const handleLeave = () => { clearTimeout(hoverTimer.current); setHoveredId(null); };
+  const handleEnter = (id) => { if (isTouchDevice()) return; clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => setHoveredId(id), 350); };
+  const handleLeave = () => { if (isTouchDevice()) return; clearTimeout(hoverTimer.current); setHoveredId(null); };
 
   return (
     <div style={{ marginBottom: -30, position: "relative" }}>
@@ -890,7 +901,7 @@ function ClassPlayer({ ytId, rawUrl, title, accountId, classId, nextItem, onNext
       {showNextPrompt && (
         <div
           style={{
-            position: "absolute", bottom: 90, right: 20, width: 260, background: "#141414", border: "1px solid #333",
+            position: "absolute", bottom: 90, right: 10, left: 10, width: "auto", maxWidth: 260, marginLeft: "auto", background: "#141414", border: "1px solid #333",
             borderRadius: 8, padding: 14, zIndex: 50, boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
           }}
           onClick={(e) => e.stopPropagation()}
@@ -1037,7 +1048,7 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = []
                 <Play size={26} fill="#000" color="#000" style={{ marginLeft: 3 }} />
               </button>
               <div style={{ position: "absolute", bottom: 24, left: 32, right: 32 }}>
-                <div style={{ fontFamily: "Helvetica Neue, Arial, sans-serif", fontWeight: 800, fontSize: 30, color: "#fff", letterSpacing: "-0.5px" }}>{item.title}</div>
+                <div style={{ fontFamily: "Helvetica Neue, Arial, sans-serif", fontWeight: 800, fontSize: "clamp(20px, 6vw, 30px)", color: "#fff", letterSpacing: "-0.5px" }}>{item.title}</div>
               </div>
             </div>
           )}
@@ -1045,7 +1056,7 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = []
             <div style={{ position: "relative", height: 320, background: `linear-gradient(160deg, ${color}CC, ${BG})` }}>
               <Icon size={140} color="rgba(255,255,255,0.15)" style={{ position: "absolute", right: 20, top: 20 }} />
               <div style={{ position: "absolute", bottom: 24, left: 32, right: 32 }}>
-                <div style={{ fontFamily: "Helvetica Neue, Arial, sans-serif", fontWeight: 800, fontSize: 34, color: "#fff", letterSpacing: "-0.5px" }}>{item.title}</div>
+                <div style={{ fontFamily: "Helvetica Neue, Arial, sans-serif", fontWeight: 800, fontSize: "clamp(22px, 6.5vw, 34px)", color: "#fff", letterSpacing: "-0.5px" }}>{item.title}</div>
                 <div style={{ marginTop: 8, color: "#ffd166", fontSize: 13, fontWeight: 600 }}>📹 Video próximamente</div>
               </div>
             </div>
@@ -1057,7 +1068,7 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = []
 
         <div className="modal-pad" style={{ padding: "20px 32px 0" }}>
           {item.videoUrl && wantsPlay && (
-            <div style={{ fontFamily: "Helvetica Neue, Arial, sans-serif", fontWeight: 800, fontSize: 26, color: "#fff", letterSpacing: "-0.5px" }}>{item.title}</div>
+            <div style={{ fontFamily: "Helvetica Neue, Arial, sans-serif", fontWeight: 800, fontSize: "clamp(19px, 5.5vw, 26px)", color: "#fff", letterSpacing: "-0.5px" }}>{item.title}</div>
           )}
           <div style={{ display: "flex", gap: 12, marginTop: item.videoUrl && wantsPlay ? 14 : 0, marginBottom: 6 }}>
             <button onClick={toggleMyList} style={pillBtn} aria-label={inMyList ? "Quitar de mi lista" : "Agregar a mi lista"} title={inMyList ? "En tu lista" : "Agregar a mi lista"}>
@@ -1069,8 +1080,8 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = []
           </div>
         </div>
 
-        <div className="modal-pad" style={{ padding: "16px 32px 32px", display: "flex", gap: 24 }}>
-          <div style={{ flex: 1 }}>
+        <div className="modal-pad modal-meta" style={{ padding: "16px 32px 32px", display: "flex", gap: 24, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 260px" }}>
             <div style={{ display: "flex", gap: 10, color: TEXT_MUTED, fontSize: 13, marginBottom: 10 }}>
               <span style={{ color: "#4ADE80", fontWeight: 700 }}>{item.subjectName || "Materia"}</span>
               <span>·</span>
@@ -1078,7 +1089,7 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = []
             </div>
             <p style={{ color: "#d2d2d2", fontSize: 15, lineHeight: 1.5, margin: 0 }}>{item.desc}</p>
           </div>
-          <div style={{ width: 180, fontSize: 13, color: TEXT_MUTED }}>
+          <div style={{ flex: "0 0 auto", minWidth: 140, fontSize: 13, color: TEXT_MUTED }}>
             <div style={{ marginBottom: 6 }}><span style={{ color: "#777" }}>Profesor/a: </span><span style={{ color: "#fff" }}>{item.prof}</span></div>
           </div>
         </div>
@@ -1097,6 +1108,47 @@ function Modal({ item, color, Icon, onClose, autoPlay, accountId, myListIds = []
    INTRO ANIMADA — homenaje a la animación de arranque de Netflix,
    con el logo de Chacaflix. Se muestra una vez al abrir la página.
    ============================================================ */
+// Sonido de apertura tipo "sting" (grave que cae + un brillo corto encima),
+// generado con el navegador — no es el audio real de Netflix (tiene derechos
+// de autor), es una idea propia con el mismo espíritu. Ojo: muchos navegadores
+// bloquean cualquier sonido automático hasta que la persona haga clic en algo,
+// así que puede sonar o no según el navegador — no hay forma de garantizarlo.
+function playIntroSound() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(55, now + 0.5);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.5, now + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.9);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = "triangle";
+    osc2.frequency.setValueAtTime(900, now);
+    gain2.gain.setValueAtTime(0.001, now);
+    gain2.gain.exponentialRampToValueAtTime(0.12, now + 0.03);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now);
+    osc2.stop(now + 0.35);
+  } catch (e) {
+    // si el navegador bloquea el audio automático, seguimos en silencio sin romper nada
+  }
+}
+
 function IntroAnimation({ onDone }) {
   // C aparece primero → el resto de las letras se expande desde ahí en cascada →
   // se sostiene el logo 1 segundo completo → fundido a negro → entra solo.
@@ -1114,6 +1166,10 @@ function IntroAnimation({ onDone }) {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onDone]);
+
+  useEffect(() => {
+    playIntroSound();
+  }, []);
 
   const letters = "CHACAFLIX".split("");
 
@@ -1769,7 +1825,16 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
           .navbar-links span, .navbar-links button { font-size: 12px !important; white-space: nowrap; }
           .modal-pad { padding-left: 18px !important; padding-right: 18px !important; }
           .hero-buttons { flex-wrap: wrap; }
+          .hero-box { height: 62vh !important; min-height: 380px !important; }
+          .modal-meta { gap: 14px !important; }
         }
+        @media (max-width: 420px) {
+          .row-card { width: 138px; }
+          .row-card-top10 { width: 128px; }
+          .top10-number { font-size: 48px !important; margin-right: -10px !important; }
+        }
+        html, body, #root { max-width: 100vw; overflow-x: hidden; }
+        button, input, select, textarea { font-family: inherit; }
       `}</style>
 
       {/* NAVBAR */}
@@ -1819,7 +1884,7 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
                   onChange={(e) => { setSearchQuery(e.target.value); setView("buscar"); }}
                   onBlur={() => { if (!searchQuery.trim()) setSearchOpen(false); }}
                   placeholder="Títulos, materias..."
-                  style={{ background: "rgba(0,0,0,0.7)", border: "1px solid #666", borderRadius: 4, padding: "6px 10px", color: "#fff", fontSize: 13, width: 180, marginRight: 8, outline: "none" }}
+                  style={{ background: "rgba(0,0,0,0.7)", border: "1px solid #666", borderRadius: 4, padding: "6px 10px", color: "#fff", fontSize: 13, width: "clamp(100px, 40vw, 180px)", marginRight: 8, outline: "none" }}
                 />
               )}
               <Search
@@ -1836,7 +1901,7 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
             <div style={{ position: "relative" }}>
               <Bell size={19} style={{ cursor: "pointer" }} onClick={() => { setNotifOpen((v) => !v); setAccountOpen(false); }} />
               {notifOpen && (
-                <div style={{ position: "absolute", top: 32, right: -10, width: 300, background: "#181818", border: "1px solid #333", borderRadius: 4, boxShadow: "0 12px 30px rgba(0,0,0,0.6)", padding: 8, zIndex: 60 }}>
+                <div style={{ position: "absolute", top: 32, right: -10, width: "min(300px, 88vw)", background: "#181818", border: "1px solid #333", borderRadius: 4, boxShadow: "0 12px 30px rgba(0,0,0,0.6)", padding: 8, zIndex: 60 }}>
                   <div style={{ color: "#fff", fontWeight: 700, fontSize: 13, padding: "6px 8px" }}>Notificaciones</div>
                   {[
                     "📚 Nueva clase de Física disponible: Leyes de Newton",
@@ -1860,7 +1925,7 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
                 <ChevronDown size={14} style={{ transform: accountOpen ? "rotate(180deg)" : "none", transition: "transform 150ms ease" }} />
               </div>
               {accountOpen && (
-                <div style={{ position: "absolute", top: 40, right: 0, width: 220, background: "#181818", border: "1px solid #333", borderRadius: 4, boxShadow: "0 12px 30px rgba(0,0,0,0.6)", padding: 8, zIndex: 60 }}>
+                <div style={{ position: "absolute", top: 40, right: 0, width: "min(220px, 80vw)", background: "#181818", border: "1px solid #333", borderRadius: 4, boxShadow: "0 12px 30px rgba(0,0,0,0.6)", padding: 8, zIndex: 60 }}>
                   <div style={{ padding: "8px 10px", color: TEXT_MUTED, fontSize: 12 }}>
                     Conectado como <strong style={{ color: "#fff" }}>{profile?.username}</strong>
                     <div style={{ marginTop: 2 }}>{CYCLES[profile?.ciclo]?.label}</div>
@@ -1892,6 +1957,7 @@ function BrowseApp({ profile, onSwitchProfile, subjects: allSubjects, onOpenAdmi
         </div>
       ) : (
       <div
+        className="hero-box"
         style={{ position: "relative", height: "78vh", minHeight: 480 }}
         onMouseEnter={() => setHeroPaused(true)}
         onMouseLeave={() => setHeroPaused(false)}
@@ -2173,7 +2239,7 @@ function AdminDashboard({ subjects, onAddClass, onUpdateClass, onDeleteClass, on
     <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 800, overflowY: "auto", fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" }}>
       {/* HEADER */}
       <div style={{ position: "sticky", top: 0, background: "#0c0c0c", borderBottom: "1px solid #262626", zIndex: 5 }}>
-        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <div style={{ color: RED, fontFamily: LOGO_FONT, fontWeight: 900, fontSize: 22, letterSpacing: "-1px", textTransform: "uppercase", textShadow: "1.5px 2px 0px #7A0D12" }}>Chacaflix</div>
             <span style={{ color: TEXT_MUTED, fontSize: 13 }}>· Panel de administrador</span>
@@ -2182,7 +2248,7 @@ function AdminDashboard({ subjects, onAddClass, onUpdateClass, onDeleteClass, on
             <ArrowLeft size={15} /> Volver a la app
           </button>
         </div>
-        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px", display: "flex", gap: 4 }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 24px", display: "flex", gap: 4, overflowX: "auto" }}>
           {[
             { key: "resumen", label: "Resumen", icon: BarChart3 },
             { key: "videos", label: "Videos", icon: LayoutDashboard },
@@ -2194,7 +2260,7 @@ function AdminDashboard({ subjects, onAddClass, onUpdateClass, onDeleteClass, on
               onClick={() => setTab(t.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "none", cursor: "pointer",
-                padding: "12px 14px", fontSize: 14, color: tab === t.key ? "#fff" : TEXT_MUTED,
+                padding: "12px 14px", fontSize: 14, color: tab === t.key ? "#fff" : TEXT_MUTED, whiteSpace: "nowrap",
                 borderBottom: tab === t.key ? `2px solid ${RED}` : "2px solid transparent", fontWeight: tab === t.key ? 700 : 400,
               }}
             >
@@ -2204,7 +2270,7 @@ function AdminDashboard({ subjects, onAddClass, onUpdateClass, onDeleteClass, on
         </div>
       </div>
 
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 24px 60px" }}>
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 16px 60px" }}>
         {/* ===== RESUMEN ===== */}
         {tab === "resumen" && (
           <div>

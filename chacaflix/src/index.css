@@ -2,6 +2,11 @@
   box-sizing: border-box;
 }
 
+html, body, #root {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   background: #141414;

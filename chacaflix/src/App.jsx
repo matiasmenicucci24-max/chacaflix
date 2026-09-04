@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, Component } from "react";
 import { supabase } from "./supabaseClient";
 import {
   Play, Pause, Info, ChevronLeft, ChevronRight, Search, Bell, ChevronDown,
@@ -596,12 +596,20 @@ const iconBtnStyle = { background: "transparent", border: "none", cursor: "point
 // puede estar expandida por fila.
 function HoverPreview({ ytId }) {
   const apiReady = useYouTubeAPI();
-  const containerRef = useRef(null);
+  const wrapperRef = useRef(null);
   const playerRef = useRef(null);
 
   useEffect(() => {
-    if (!ytId || !apiReady || !containerRef.current) return;
-    playerRef.current = new window.YT.Player(containerRef.current, {
+    if (!ytId || !apiReady || !wrapperRef.current) return;
+    // Le damos a YouTube un div creado a mano (no uno que React esté vigilando),
+    // porque la API de YouTube reemplaza ese div por un <iframe> propio, y si
+    // fuera un div de React, React se confunde al intentar limpiarlo después.
+    const mountEl = document.createElement("div");
+    mountEl.style.width = "100%";
+    mountEl.style.height = "100%";
+    wrapperRef.current.appendChild(mountEl);
+
+    playerRef.current = new window.YT.Player(mountEl, {
       width: "100%",
       height: "100%",
       videoId: ytId,
@@ -610,10 +618,14 @@ function HoverPreview({ ytId }) {
         onReady: (e) => { e.target.mute(); e.target.playVideo(); },
       },
     });
-    return () => { try { playerRef.current?.destroy?.(); } catch {} };
+
+    return () => {
+      try { playerRef.current?.destroy?.(); } catch {}
+      try { if (mountEl.parentNode) mountEl.parentNode.removeChild(mountEl); } catch {}
+    };
   }, [ytId, apiReady]);
 
-  return <div ref={containerRef} className="yt-fill" style={{ position: "absolute", inset: 0 }} />;
+  return <div ref={wrapperRef} className="yt-fill" style={{ position: "absolute", inset: 0 }} />;
 }
 
 /* ============================================================
@@ -645,10 +657,18 @@ function ClassPlayer({ ytId, rawUrl, title, accountId, classId, nextItem, onNext
   useEffect(() => {
     if (!ytId || !apiReady || !ytContainerRef.current) return;
     let cancelled = false;
+    let mountEl = null;
     (async () => {
       const resume = accountId && classId ? await dbFetchOneProgress(accountId, classId) : 0;
       if (cancelled || !ytContainerRef.current) return;
-      ytPlayerRef.current = new window.YT.Player(ytContainerRef.current, {
+      // Le damos a YouTube un div creado a mano (no uno que React esté vigilando),
+      // porque la API de YouTube reemplaza ese div por un <iframe> propio, y si
+      // fuera un div de React, React se confunde al intentar limpiarlo después.
+      mountEl = document.createElement("div");
+      mountEl.style.width = "100%";
+      mountEl.style.height = "100%";
+      ytContainerRef.current.appendChild(mountEl);
+      ytPlayerRef.current = new window.YT.Player(mountEl, {
         width: "100%",
         height: "100%",
         videoId: ytId,
@@ -673,7 +693,11 @@ function ClassPlayer({ ytId, rawUrl, title, accountId, classId, nextItem, onNext
         },
       });
     })();
-    return () => { cancelled = true; ytPlayerRef.current?.destroy?.(); };
+    return () => {
+      cancelled = true;
+      try { ytPlayerRef.current?.destroy?.(); } catch {}
+      try { if (mountEl && mountEl.parentNode) mountEl.parentNode.removeChild(mountEl); } catch {}
+    };
   }, [ytId, apiReady, accountId, classId]);
 
   // guarda el progreso real cada pocos segundos, y una última vez al cerrar
@@ -1186,6 +1210,19 @@ function dbAccountToApp(row) {
 function appAccountToDb(acc) {
   return { username: acc.username, password: acc.password, ciclo: acc.ciclo, color: acc.color, avatar_icon: acc.avatarIcon || "Smile" };
 }
+// Sesión guardada en este dispositivo, para no tener que iniciar sesión cada vez
+function readSession() {
+  try { return localStorage.getItem("chacaflix_session"); } catch { return null; }
+}
+function writeSession(id) {
+  try { if (id) localStorage.setItem("chacaflix_session", id); else localStorage.removeItem("chacaflix_session"); } catch {}
+}
+async function dbFetchAccountById(id) {
+  const { data, error } = await supabase.from("accounts").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ? dbAccountToApp(data) : null;
+}
+
 async function dbFindAccount(username) {
   const { data, error } = await supabase.from("accounts").select("*").ilike("username", username).maybeSingle();
   if (error) throw error;
@@ -2672,6 +2709,41 @@ function HomeSkeleton() {
 }
 
 /* ============================================================
+   RED DE SEGURIDAD — si algo se rompe en cualquier parte de la app,
+   en vez de quedar en negro sin explicación, muestra un aviso claro
+   con un botón para recargar.
+   ============================================================ */
+export class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, message: "" };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, message: error?.message || "Error desconocido" };
+  }
+  componentDidCatch(error, info) {
+    console.error("Chacaflix — error capturado:", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ position: "fixed", inset: 0, background: "#141414", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, color: "#fff", fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif", padding: 24, textAlign: "center" }}>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>Uy, algo se rompió</div>
+          <div style={{ color: "#9c9c9e", fontSize: 13, maxWidth: 440 }}>{this.state.message}</div>
+          <button
+            onClick={() => window.location.reload()}
+            style={{ background: "#E50914", border: "none", color: "#fff", padding: "10px 24px", borderRadius: 4, fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+          >
+            Recargar página
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/* ============================================================
    RAÍZ DE LA APP — intro animada → login/registro → app
    ============================================================ */
 export default function ChacaFlix() {
@@ -2696,6 +2768,17 @@ export default function ChacaFlix() {
 
   useEffect(() => { reloadSubjects(); }, []);
 
+  // Si este dispositivo ya tenía una sesión guardada, la recuperamos en
+  // paralelo mientras se muestra la intro, para no pedir login de nuevo.
+  const pendingSessionRef = useRef(undefined); // undefined = todavía buscando, null = no había, objeto = encontrada
+  useEffect(() => {
+    const id = readSession();
+    if (!id) { pendingSessionRef.current = null; return; }
+    dbFetchAccountById(id)
+      .then((acc) => { pendingSessionRef.current = acc || null; })
+      .catch(() => { pendingSessionRef.current = null; });
+  }, []);
+
   const addClass = async (subjectId, cls) => { await dbAddClass(subjectId, cls); await reloadSubjects(); };
   const updateClass = async (subjectId, classId, patch) => { await dbUpdateClass(subjectId, classId, patch); await reloadSubjects(); };
   const deleteClass = async (subjectId, classId) => { await dbDeleteClass(classId); await reloadSubjects(); };
@@ -2703,13 +2786,27 @@ export default function ChacaFlix() {
   const updateSubject = async (id, patch) => { await dbUpdateSubject(id, patch); await reloadSubjects(); };
   const deleteSubject = async (id) => { await dbDeleteSubject(id); await reloadSubjects(); };
 
-  const handleIntroDone = () => setStage("auth");
+  // useCallback para que la referencia no cambie entre renders — si cambiara,
+  // el temporizador de la intro se reiniciaría cada vez que el resto de la
+  // app actualiza su estado en paralelo (por ejemplo al terminar de cargar materias).
+  const handleIntroDone = useCallback(() => {
+    const savedAccount = pendingSessionRef.current;
+    if (savedAccount) {
+      setAccount(savedAccount);
+      setStage("app");
+    } else {
+      setStage("auth");
+    }
+  }, []);
+
   const handleAuthenticated = (acc) => {
     setAccount(acc);
+    writeSession(acc.id);
     setStage("app");
   };
   const handleLogout = () => {
     setAccount(null);
+    writeSession(null);
     setStage("auth");
   };
 
